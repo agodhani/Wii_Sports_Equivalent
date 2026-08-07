@@ -62,6 +62,7 @@ async function main() {
   let paused = false;
   let pauseStart = 0;
   let lastNow: number | null = null;
+  let fpsSmoothed = 60;
   let lastLaunchAt = 0;
   let bouncedSinceLaunch = false;
   let restartBound = false;
@@ -150,8 +151,16 @@ async function main() {
 
   function step() {
     const now = performance.now() / 1000;
-    const dt = Math.min(now - (lastNow ?? now), 0.05);
+    const rawDt = now - (lastNow ?? now);
+    const dt = Math.min(rawDt, 0.05); // clamp only what drives physics/lerps
     lastNow = now;
+    if (rawDt > 0) {
+      // Exponential average, not a raw instantaneous reading — a per-frame FPS
+      // number jitters too much to read while the pose model's inference time
+      // varies frame to frame.
+      fpsSmoothed += (1 / rawDt - fpsSmoothed) * 0.1;
+    }
+    hud.setFps(fpsSmoothed);
     const frame = tracker.process(video, now);
     hud.setPreviewFrame(frame);
     const lost = !frame || frame.trackingLost;

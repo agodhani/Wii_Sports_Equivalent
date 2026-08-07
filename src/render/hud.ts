@@ -21,6 +21,8 @@ export class Hud {
       </div>
       <canvas id="preview" width="160" height="120" style="position:fixed;right:16px;
         bottom:16px;border:2px solid rgba(255,255,255,.5);border-radius:8px"></canvas>
+      <div id="fps" style="position:fixed;top:16px;right:16px;color:#fff;
+        font-family:monospace;font-size:13px;opacity:.75;text-shadow:0 1px 3px #000"></div>
       <div id="meter" style="position:fixed;left:16px;bottom:16px;width:180px;
         color:#fff;font-size:13px;font-family:system-ui,sans-serif;display:none">
         <div style="margin-bottom:4px;opacity:.85">Swing strength</div>
@@ -56,6 +58,11 @@ export class Hud {
 
   hideSwingMeter(): void {
     (this.root.querySelector('#meter') as HTMLElement).style.display = 'none';
+  }
+
+  /** Smoothed frames-per-second, shown top-right — the main hardware-fit signal. */
+  setFps(fps: number): void {
+    (this.root.querySelector('#fps') as HTMLElement).textContent = `${Math.round(fps)} fps`;
   }
 
   setScore(player: number, cpu: number): void {
