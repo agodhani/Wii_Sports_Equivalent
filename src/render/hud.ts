@@ -7,7 +7,7 @@ export class Hud {
   private previewCtx: CanvasRenderingContext2D;
   private flashTimer = 0;
 
-  constructor(root: HTMLElement, private video: HTMLVideoElement) {
+  constructor(private root: HTMLElement, private video: HTMLVideoElement) {
     root.innerHTML = `
       <div id="score" style="position:fixed;top:16px;left:50%;transform:translateX(-50%);
         color:#fff;font-size:32px;font-weight:700;text-shadow:0 2px 6px #000">0 — 0</div>
@@ -20,11 +20,42 @@ export class Hud {
         <div id="overlay-sub" style="font-size:20px;margin-top:12px;opacity:.85"></div>
       </div>
       <canvas id="preview" width="160" height="120" style="position:fixed;right:16px;
-        bottom:16px;border:2px solid rgba(255,255,255,.5);border-radius:8px"></canvas>`;
+        bottom:16px;border:2px solid rgba(255,255,255,.5);border-radius:8px"></canvas>
+      <div id="meter" style="position:fixed;left:16px;bottom:16px;width:180px;
+        color:#fff;font-size:13px;font-family:system-ui,sans-serif;display:none">
+        <div style="margin-bottom:4px;opacity:.85">Swing strength</div>
+        <div style="position:relative;height:12px;background:rgba(255,255,255,.18);
+          border-radius:6px;overflow:hidden">
+          <div id="meter-fill" style="height:100%;width:0%;background:#ffe14d;
+            transition:width .05s linear"></div>
+          <div id="meter-mark" style="position:absolute;top:0;bottom:0;width:2px;
+            background:#fff"></div>
+        </div>
+      </div>`;
     this.score = root.querySelector('#score')!;
     this.flashEl = root.querySelector('#flash')!;
     this.overlay = root.querySelector('#overlay')!;
     this.previewCtx = (root.querySelector('#preview') as HTMLCanvasElement).getContext('2d')!;
+  }
+
+  /**
+   * Live swing strength against the trigger threshold. The white mark is the
+   * threshold, so a swing that fails to register shows exactly how short it fell
+   * — which is what makes the trigger tunable by playing rather than by guessing.
+   */
+  setSwingMeter(strength: number, threshold: number): void {
+    const meter = this.root.querySelector('#meter') as HTMLElement;
+    meter.style.display = 'block';
+    const full = threshold * 1.6; // headroom so a solid swing doesn't peg the bar
+    const fill = this.root.querySelector('#meter-fill') as HTMLElement;
+    fill.style.width = `${Math.min(100, (strength / full) * 100)}%`;
+    fill.style.background = strength >= threshold ? '#5ce65c' : '#ffe14d';
+    (this.root.querySelector('#meter-mark') as HTMLElement).style.left =
+      `${(threshold / full) * 100}%`;
+  }
+
+  hideSwingMeter(): void {
+    (this.root.querySelector('#meter') as HTMLElement).style.display = 'none';
   }
 
   setScore(player: number, cpu: number): void {

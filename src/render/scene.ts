@@ -11,6 +11,11 @@ export class Scene {
   private ball: THREE.Mesh;
   private player: THREE.Mesh;
   private cpu: THREE.Mesh;
+  private upperArm: THREE.Mesh;
+  private forearm: THREE.Mesh;
+  private racketHandle: THREE.Mesh;
+  private racketHead: THREE.Mesh;
+  private arm: THREE.Group;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -78,9 +83,73 @@ export class Scene {
     this.cpu.position.set(0, 0.8, -11);
     this.scene.add(this.player, this.cpu);
 
+    // Playing arm and racket, driven by the player's tracked pose. Each segment
+    // is a unit-length cylinder along +Y, then positioned/oriented/stretched per
+    // frame by segment(), so the whole limb is three cheap transforms.
+    const limbMat = new THREE.MeshLambertMaterial({ color: 0xf0c9a0 });
+    const unitLimb = (radius: number) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 1, 10), limbMat);
+      m.geometry.translate(0, 0.5, 0); // pivot at the base so scale.y grows toward +Y
+      return m;
+    };
+    this.upperArm = unitLimb(0.075);
+    this.forearm = unitLimb(0.06);
+    this.racketHandle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.028, 0.028, 1, 8),
+      new THREE.MeshLambertMaterial({ color: 0x2b2b2b }),
+    );
+    this.racketHandle.geometry.translate(0, 0.5, 0);
+    this.racketHead = new THREE.Mesh(
+      new THREE.TorusGeometry(0.17, 0.028, 8, 20),
+      new THREE.MeshLambertMaterial({ color: 0xe8452f }),
+    );
+    this.racketHead.scale.set(1, 1.25, 1); // oval, long side along the forearm
+    this.arm = new THREE.Group();
+    this.arm.add(this.upperArm, this.forearm, this.racketHandle, this.racketHead);
+    this.arm.visible = false;
+    this.scene.add(this.arm);
+
     this.resize();
     window.addEventListener('resize', () => this.resize());
   }
+
+  /** Point a unit-length +Y segment mesh from `a` to `b`. */
+  private static segment(mesh: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3): void {
+    const dir = new THREE.Vector3().subVectors(b, a);
+    const len = dir.length();
+    mesh.position.copy(a);
+    if (len > 1e-6) {
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().divideScalar(len));
+    }
+    mesh.scale.set(1, len, 1);
+  }
+
+  /**
+   * Place the playing arm. Positions are court-space; the racket extends past
+   * the wrist along the forearm, so it swings where the real forearm points.
+   */
+  setArm(shoulder: Vec3, elbow: Vec3, wrist: Vec3): void {
+    this.arm.visible = true;
+    const s = new THREE.Vector3(shoulder.x, shoulder.y, shoulder.z);
+    const e = new THREE.Vector3(elbow.x, elbow.y, elbow.z);
+    const w = new THREE.Vector3(wrist.x, wrist.y, wrist.z);
+    Scene.segment(this.upperArm, s, e);
+    Scene.segment(this.forearm, e, w);
+
+    const forearmDir = new THREE.Vector3().subVectors(w, e);
+    if (forearmDir.lengthSq() < 1e-9) forearmDir.set(0, -1, 0);
+    forearmDir.normalize();
+    const handleEnd = w.clone().addScaledVector(forearmDir, 0.34);
+    Scene.segment(this.racketHandle, w, handleEnd);
+    this.racketHead.position.copy(handleEnd.clone().addScaledVector(forearmDir, 0.17));
+    // The head's ring lies in the court XY plane, so its face points down the
+    // court and reads face-on from the camera behind the player. Spinning it
+    // about that axis keeps the oval's long side along the forearm, which is
+    // what makes the racket's tilt visibly follow the arm.
+    this.racketHead.rotation.set(0, 0, Math.atan2(forearmDir.y, forearmDir.x) - Math.PI / 2);
+  }
+
+  setArmVisible(v: boolean): void { this.arm.visible = v; }
 
   setBall(pos: Vec3): void { this.ball.position.set(pos.x, pos.y, pos.z); }
   setBallVisible(v: boolean): void { this.ball.visible = v; }

@@ -9,6 +9,8 @@ export interface PoseFrame {
   t: number;                 // seconds (monotonic)
   leftWrist: Vec2;
   rightWrist: Vec2;
+  leftElbow: Vec2;
+  rightElbow: Vec2;
   leftShoulder: Vec2;
   rightShoulder: Vec2;
   leftHip: Vec2;

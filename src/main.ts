@@ -1,17 +1,27 @@
 import { startCamera } from './camera';
 import { PoseTracker } from './tracking/pose';
-import { SwingDetector } from './swing/detector';
+import { SwingDetector, TRIGGER_SCORE } from './swing/detector';
 import { Match } from './game/match';
 import { stepBall, timeToReachZ, launchBall, type BallState } from './game/ball';
 import { resolveHit, CONTACT_WINDOW_S, type IncomingBall } from './game/hit';
 import { cpuReturn } from './game/cpu';
 import { Scene } from './render/scene';
 import { Hud } from './render/hud';
-import type { Handedness, PoseFrame, ShotCommand } from './types';
+import type { Handedness, PoseFrame, ShotCommand, Vec2, Vec3 } from './types';
 
 const PLAYER_Z = 11;
 const CPU_Z = -11;
 const COURT_HALF_W = 4.11;
+
+// Calibration: how vigorously the playing hand must wave to start the match.
+// Measured as average wrist speed in shoulder-widths/sec, so it is independent
+// of both frame rate and how far back the player is standing.
+const WAVE_TAU = 0.5;
+const WAVE_TRIGGER_SPEED = 2.5;
+
+// On-screen arm: court metres per shoulder-width, and where the shoulder sits.
+const ARM_SCALE = 0.55;
+const SHOULDER_HEIGHT = 1.45;
 
 const video = document.getElementById('webcam') as HTMLVideoElement;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -64,6 +74,21 @@ async function main() {
 
   match.start();
   hud.showOverlay('Calibration', 'Step back until your whole upper body has green dots');
+
+  /**
+   * Map a pose-space landmark onto court space beside the player avatar.
+   * Offsets are measured in shoulder-widths so the arm is the same size on
+   * screen however far back the player stands; pose y grows downward, court y up.
+   */
+  function toCourt(p: Vec2, f: PoseFrame): Vec3 {
+    const midX = (f.leftShoulder.x + f.rightShoulder.x) / 2;
+    const midY = (f.leftShoulder.y + f.rightShoulder.y) / 2;
+    return {
+      x: playerX + ((p.x - midX) / f.shoulderWidth) * ARM_SCALE,
+      y: SHOULDER_HEIGHT - ((p.y - midY) / f.shoulderWidth) * ARM_SCALE,
+      z: PLAYER_Z - 0.35,
+    };
+  }
 
   function beginServe(t: number) {
     serveAt = t + 1.0;
@@ -131,6 +156,20 @@ async function main() {
     hud.setPreviewFrame(frame);
     const lost = !frame || frame.trackingLost;
 
+    // Mirror the playing arm and its racket into the scene every frame, in every
+    // phase — during calibration it doubles as proof that tracking is working.
+    if (frame && !lost) {
+      const pick = (r: Vec2, l: Vec2) => (handedness === 'right' ? r : l);
+      scene.setArm(
+        toCourt(pick(frame.rightShoulder, frame.leftShoulder), frame),
+        toCourt(pick(frame.rightElbow, frame.leftElbow), frame),
+        toCourt(pick(frame.rightWrist, frame.leftWrist), frame),
+      );
+    } else {
+      scene.setArmVisible(false);
+    }
+    if (detector) hud.setSwingMeter(detector.strength, TRIGGER_SCORE);
+
     // ---- calibration phase ----
     if (match.phase === 'calibration' && frame) {
       if (lost) {
@@ -138,17 +177,24 @@ async function main() {
       } else {
         visibleSince ??= now;
         if (prevFrame && now - visibleSince > 1.0 && countdownEnd === null) {
-          const dt = frame.t - prevFrame.t;
-          if (dt > 0 && frame.shoulderWidth > 1e-6) {
-            waveL += Math.hypot(frame.leftWrist.x - prevFrame.leftWrist.x,
-                                frame.leftWrist.y - prevFrame.leftWrist.y) / frame.shoulderWidth;
-            waveR += Math.hypot(frame.rightWrist.x - prevFrame.rightWrist.x,
-                                frame.rightWrist.y - prevFrame.rightWrist.y) / frame.shoulderWidth;
+          const frameDt = frame.t - prevFrame.t;
+          if (frameDt > 0 && frame.shoulderWidth > 1e-6) {
+            // Running average of each wrist's speed, in shoulder-widths/sec, over
+            // roughly the last WAVE_TAU seconds. Averaging by elapsed time rather
+            // than by frame keeps this identical at 30 and 120 fps.
+            const alpha = 1 - Math.exp(-frameDt / WAVE_TAU);
+            const speed = (a: Vec2, b: Vec2) =>
+              Math.hypot(a.x - b.x, a.y - b.y) / frameDt / frame.shoulderWidth;
+            waveL += (speed(frame.leftWrist, prevFrame.leftWrist) - waveL) * alpha;
+            waveR += (speed(frame.rightWrist, prevFrame.rightWrist) - waveR) * alpha;
           }
-          waveL *= 0.98;
-          waveR *= 0.98;
-          hud.showOverlay('Wave your playing hand!', 'Keep waving until the countdown starts');
-          if (Math.max(waveL, waveR) > 7.5) {
+          const progress = Math.min(1, Math.max(waveL, waveR) / WAVE_TRIGGER_SPEED);
+          hud.showOverlay(
+            'Wave your playing hand!',
+            `Keep waving until the countdown starts   ${'█'.repeat(Math.round(progress * 20))
+              .padEnd(20, '░')}`,
+          );
+          if (Math.max(waveL, waveR) > WAVE_TRIGGER_SPEED) {
             handedness = waveR >= waveL ? 'right' : 'left';
             detector = new SwingDetector(handedness);
             countdownEnd = now + 3;
