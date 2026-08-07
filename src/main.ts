@@ -42,10 +42,11 @@ async function main() {
   let ball: BallState | null = null;
   let incoming: IncomingBall | null = null;   // set while ball travels toward player
   let pendingShot: ShotCommand | null = null; // player's accepted shot awaiting contact
-  let cpuTargetX = 0;
+  let cpuX = 0; // CPU's actual standing position on court (updated only when CPU strikes)
   let playerX = 0;
   let serveAt = 0;
   let paused = false;
+  let pauseStart = 0;
 
   // calibration state
   let visibleSince: number | null = null;
@@ -61,6 +62,7 @@ async function main() {
     ball = null;
     incoming = null;
     pendingShot = null;
+    cpuX = 0; // CPU resets to center to await the next serve
     scene.setBallVisible(false);
   }
 
@@ -81,8 +83,9 @@ async function main() {
           }
         : null;
     } else {
+      // toward CPU: cpuX (the CPU's standing position) is updated only when
+      // the CPU actually strikes the return, not from the shot's target.
       incoming = null;
-      cpuTargetX = shot.targetX;
     }
   }
 
@@ -131,11 +134,16 @@ async function main() {
     if (match.phase === 'rally' || match.phase === 'serving') {
       if (lost && !paused) {
         paused = true;
+        pauseStart = now;
         hud.showOverlay('Paused', 'Step back into frame to continue');
       } else if (!lost && paused) {
         paused = false;
         hud.hideOverlay();
-        if (match.phase === 'serving') serveAt = now + 1.0; // re-arm serve timer
+        // shift every pending wall-clock deadline forward by the pause
+        // duration so tracking loss never costs the player a point.
+        const pausedFor = now - pauseStart;
+        serveAt += pausedFor;
+        if (incoming) incoming.idealContactTime += pausedFor;
       }
     }
 
@@ -147,7 +155,7 @@ async function main() {
           targetZ: 8.5,
           flightTime: 1.5,
         };
-        launch({ x: cpuTargetX, y: 1.2, z: CPU_Z }, shot, now);
+        launch({ x: cpuX, y: 1.2, z: CPU_Z }, shot, now);
         match.serveLaunched();
       }
 
@@ -186,8 +194,9 @@ async function main() {
         // ball reaches CPU's strike plane
         if (ball.vel.z < 0 && ball.pos.z <= CPU_Z + 1.2) {
           const reachTime = 1.0; // CPU had the ball's flight to react; fixed budget
-          const ret = cpuReturn(ball.pos.x, cpuTargetX, reachTime, Math.random);
+          const ret = cpuReturn(ball.pos.x, cpuX, reachTime, Math.random);
           if (ret) {
+            cpuX = ball.pos.x; // CPU moved to the ball to strike it
             launch({ x: ball.pos.x, y: Math.max(ball.pos.y, 0.8), z: ball.pos.z }, ret, now);
           } else {
             match.pointTo('player');
@@ -207,8 +216,8 @@ async function main() {
         const targetX = incoming && ball.vel.z > 0 ? ball.pos.x : 0;
         playerX += (targetX - playerX) * 0.08;
         scene.setPlayerX(playerX);
-        const cpuX = ball.vel.z < 0 ? ball.pos.x : cpuTargetX;
-        scene.setCpuX(cpuX * 0.9);
+        const cpuDrawX = ball.vel.z < 0 ? ball.pos.x : cpuX;
+        scene.setCpuX(cpuDrawX * 0.9);
 
         scene.setBall(ball.pos);
         scene.setBallVisible(true);
