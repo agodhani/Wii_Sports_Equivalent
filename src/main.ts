@@ -17,9 +17,13 @@ const video = document.getElementById('webcam') as HTMLVideoElement;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const hudRoot = document.getElementById('hud') as HTMLElement;
 
+// constructed at the top of main() before any await, so it's available to the
+// top-level .catch() below even if main() rejects partway through startup.
+let hud: Hud;
+
 async function main() {
   const scene = new Scene(canvas);
-  const hud = new Hud(hudRoot, video);
+  hud = new Hud(hudRoot, video);
   const match = new Match();
 
   hud.showOverlay('Webcam Tennis', 'Allow camera access to play');
@@ -47,6 +51,10 @@ async function main() {
   let serveAt = 0;
   let paused = false;
   let pauseStart = 0;
+  let lastNow: number | null = null;
+  let lastLaunchAt = 0;
+  let bouncedSinceLaunch = false;
+  let restartBound = false;
 
   // calibration state
   let visibleSince: number | null = null;
@@ -66,10 +74,27 @@ async function main() {
     scene.setBallVisible(false);
   }
 
+  /** Restart the match after gameover without re-running calibration. */
+  function restart() {
+    window.removeEventListener('keydown', onRestartKeydown);
+    window.removeEventListener('click', restart);
+    restartBound = false;
+    match.reset();
+    match.start();
+    match.calibrated();
+    beginServe(performance.now() / 1000);
+    hud.hideOverlay();
+  }
+  function onRestartKeydown(e: KeyboardEvent) {
+    if (e.code === 'Space') restart();
+  }
+
   /** Launch the ball and, if it heads to the player, precompute the contact info. */
   function launch(from: { x: number; y: number; z: number }, shot: ShotCommand, now: number) {
     ball = launchBall(from, shot);
     pendingShot = null;
+    lastLaunchAt = now;
+    bouncedSinceLaunch = false;
     if (shot.targetZ > 0) {
       // toward player: ideal contact when ball reaches the player's strike plane
       const tHit = timeToReachZ(ball, PLAYER_Z - 1.2);
@@ -90,7 +115,18 @@ async function main() {
   }
 
   function loop() {
+    try {
+      step();
+    } catch {
+      hud.showOverlay('Something went wrong', 'Reload the page to restart.');
+      return; // stop scheduling frames
+    }
+  }
+
+  function step() {
     const now = performance.now() / 1000;
+    const dt = Math.min(now - (lastNow ?? now), 0.05);
+    lastNow = now;
     const frame = tracker.process(video, now);
     hud.setPreviewFrame(frame);
     const lost = !frame || frame.trackingLost;
@@ -103,14 +139,16 @@ async function main() {
         visibleSince ??= now;
         if (prevFrame && now - visibleSince > 1.0 && countdownEnd === null) {
           const dt = frame.t - prevFrame.t;
-          if (dt > 0) {
+          if (dt > 0 && frame.shoulderWidth > 1e-6) {
             waveL += Math.hypot(frame.leftWrist.x - prevFrame.leftWrist.x,
-                                frame.leftWrist.y - prevFrame.leftWrist.y);
+                                frame.leftWrist.y - prevFrame.leftWrist.y) / frame.shoulderWidth;
             waveR += Math.hypot(frame.rightWrist.x - prevFrame.rightWrist.x,
-                                frame.rightWrist.y - prevFrame.rightWrist.y);
+                                frame.rightWrist.y - prevFrame.rightWrist.y) / frame.shoulderWidth;
           }
+          waveL *= 0.98;
+          waveR *= 0.98;
           hud.showOverlay('Wave your playing hand!', 'Keep waving until the countdown starts');
-          if (Math.max(waveL, waveR) > 1.5) {
+          if (Math.max(waveL, waveR) > 7.5) {
             handedness = waveR >= waveL ? 'right' : 'left';
             detector = new SwingDetector(handedness);
             countdownEnd = now + 3;
@@ -161,10 +199,18 @@ async function main() {
 
       // ---- rally ----
       if (match.phase === 'rally' && ball) {
-        ball = stepBall(ball, 1 / 60);
+        const preVelY = ball.vel.y;
+        ball = stepBall(ball, dt);
+        if (preVelY < 0 && ball.vel.y > 0 && !bouncedSinceLaunch) {
+          bouncedSinceLaunch = true;
+          if (Math.abs(ball.pos.x) > COURT_HALF_W || Math.abs(ball.pos.z) > 11.9) {
+            match.pointTo(ball.vel.z > 0 ? 'player' : 'cpu');
+            hud.flash(ball.vel.z > 0 ? 'Out — your point!' : 'Out!');
+          }
+        }
 
         // player swing?
-        if (frame && detector && incoming) {
+        if (match.phase === 'rally' && frame && detector && incoming) {
           const swing = detector.update(frame);
           if (swing) {
             const shot = resolveHit(swing, incoming);
@@ -179,7 +225,7 @@ async function main() {
         }
 
         // ball reaches the player's strike plane
-        if (ball.vel.z > 0 && ball.pos.z >= PLAYER_Z - 1.2) {
+        if (match.phase === 'rally' && ball.vel.z > 0 && ball.pos.z >= PLAYER_Z - 1.2) {
           if (pendingShot) {
             launch({ x: ball.pos.x, y: Math.max(ball.pos.y, 0.8), z: ball.pos.z }, pendingShot, now);
           } else if (incoming && now <= incoming.idealContactTime + CONTACT_WINDOW_S) {
@@ -192,7 +238,7 @@ async function main() {
         }
 
         // ball reaches CPU's strike plane
-        if (ball.vel.z < 0 && ball.pos.z <= CPU_Z + 1.2) {
+        if (match.phase === 'rally' && ball.vel.z < 0 && ball.pos.z <= CPU_Z + 1.2) {
           const reachTime = 1.0; // CPU had the ball's flight to react; fixed budget
           const ret = cpuReturn(ball.pos.x, cpuX, reachTime, Math.random);
           if (ret) {
@@ -204,17 +250,18 @@ async function main() {
           }
         }
 
-        // out of bounds after landing behind baselines or past sidelines
-        if (match.phase === 'rally' &&
-            (Math.abs(ball.pos.x) > COURT_HALF_W + 1.5 || Math.abs(ball.pos.z) > 14)) {
+        // far-out safety net for balls that never bounce (e.g. hit long in the air
+        // past the fence) — guarded so it can never fire on the frame it launched.
+        if (match.phase === 'rally' && now - lastLaunchAt > 0.1 &&
+            (Math.abs(ball.pos.x) > 8 || Math.abs(ball.pos.z) > 16)) {
           // whoever hit it last loses the point: ball moving +z = CPU hit it out
           match.pointTo(ball.vel.z > 0 ? 'player' : 'cpu');
           hud.flash(ball.vel.z > 0 ? 'Out — your point!' : 'Out!');
         }
 
-        // player avatar auto-runs toward incoming ball
+        // player avatar auto-runs toward incoming ball (frame-rate independent lerp)
         const targetX = incoming && ball.vel.z > 0 ? ball.pos.x : 0;
-        playerX += (targetX - playerX) * 0.08;
+        playerX += (targetX - playerX) * (1 - Math.pow(0.92, dt * 60));
         scene.setPlayerX(playerX);
         const cpuDrawX = ball.vel.z < 0 ? ball.pos.x : cpuX;
         scene.setCpuX(cpuDrawX * 0.9);
@@ -233,15 +280,25 @@ async function main() {
         hud.setScore(match.playerScore, match.cpuScore);
         hud.showOverlay(
           match.winner === 'player' ? 'You win! 🎾' : 'CPU wins',
-          'Refresh the page to play again',
+          'Press Space or click to play again',
         );
+        if (!restartBound) {
+          restartBound = true;
+          window.addEventListener('keydown', onRestartKeydown);
+          window.addEventListener('click', restart);
+        }
       }
     }
 
     scene.render();
-    if (match.phase !== 'gameover') requestAnimationFrame(loop);
+    requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
 }
 
-main();
+main().catch(() => {
+  hud.showOverlay(
+    'Could not start',
+    'Check your internet connection and reload — the pose model failed to load.',
+  );
+});
