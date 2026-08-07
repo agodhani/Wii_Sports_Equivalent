@@ -28,6 +28,43 @@ function sweep(d: SwingDetector, x0: number, x1: number, dur: number, t0: number
   return events;
 }
 
+/** Build a PoseFrame with the left wrist at `wrist`; body centered at x=0.5. */
+function leftFrame(t: number, wrist: Vec2, lost = false): PoseFrame {
+  return {
+    t,
+    rightWrist: { x: 0.6, y: 0.6 },
+    leftWrist: wrist,
+    leftShoulder: { x: 0.4, y: 0.4 },
+    rightShoulder: { x: 0.6, y: 0.4 },   // shoulderWidth 0.2, midpoint x=0.5
+    leftHip: { x: 0.42, y: 0.7 },
+    rightHip: { x: 0.58, y: 0.7 },
+    shoulderWidth: 0.2,
+    trackingLost: lost,
+  };
+}
+
+/** Feed a horizontal left wrist sweep from x0 to x1 over `dur` seconds at 30fps. */
+function leftSweep(d: SwingDetector, x0: number, x1: number, dur: number, t0: number) {
+  const events = [];
+  const n = Math.round(dur * 30);
+  for (let i = 0; i <= n; i++) {
+    const e = d.update(leftFrame(t0 + (i / 30), { x: x0 + (x1 - x0) * (i / n), y: 0.5 }));
+    if (e) events.push(e);
+  }
+  return events;
+}
+
+/** Feed a vertical wrist sweep (x constant, y0 to y1) over `dur` seconds at 30fps. */
+function verticalSweep(d: SwingDetector, y0: number, y1: number, dur: number, t0: number) {
+  const events = [];
+  const n = Math.round(dur * 30);
+  for (let i = 0; i <= n; i++) {
+    const e = d.update(frame(t0 + (i / 30), { x: 0.5, y: y0 + (y1 - y0) * (i / n) }));
+    if (e) events.push(e);
+  }
+  return events;
+}
+
 describe('SwingDetector', () => {
   it('emits one forehand for a fast right-to-left sweep starting on the right', () => {
     const d = new SwingDetector('right');
@@ -73,5 +110,22 @@ describe('SwingDetector', () => {
       if (e) events.push(e);
     }
     expect(events).toHaveLength(0);
+  });
+
+  it('ignores fast purely vertical motion (horizontal speed irrelevant)', () => {
+    const d = new SwingDetector('right');
+    // Fast vertical sweep (x constant at 0.5, y sweeping) over 0.2s
+    // 0.3 units vertical in 0.2s = 1.5 u/s, but horizontal speed ~0, should not trigger
+    const events = verticalSweep(d, 0.3, 0.6, 0.2, 0);
+    expect(events).toHaveLength(0);
+  });
+
+  it('left-handed player fires forehand when left wrist is left of shoulder midpoint', () => {
+    const d = new SwingDetector('left');
+    // Left wrist sweep from left (0.2) to right (0.5) over 0.2s
+    // For left-handed: wrist left of center = forehand
+    const events = leftSweep(d, 0.2, 0.5, 0.2, 0);
+    expect(events).toHaveLength(1);
+    expect(events[0].side).toBe('forehand');
   });
 });

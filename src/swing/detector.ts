@@ -26,15 +26,16 @@ export class SwingDetector {
 
     const vx = (wrist.x - this.prev.wrist.x) / dt / f.shoulderWidth;
     const vy = (wrist.y - this.prev.wrist.y) / dt / f.shoulderWidth;
-    const speed = Math.hypot(vx, vy);
+    const hspeed = Math.abs(vx);  // horizontal speed only for triggering
+    const speed = Math.hypot(vx, vy);  // total speed for SwingEvent
     this.prev = { wrist, t: f.t };
 
     if (this.state === 'cooldown') {
-      if (speed < RESET_SPEED && f.t - this.triggeredAt >= COOLDOWN_S) this.state = 'idle';
+      if (hspeed < RESET_SPEED && f.t - this.triggeredAt >= COOLDOWN_S) this.state = 'idle';
       return null;
     }
 
-    if (speed >= TRIGGER_SPEED) {
+    if (hspeed >= TRIGGER_SPEED) {
       this.state = 'cooldown';
       this.triggeredAt = f.t;
       const midX = (f.leftShoulder.x + f.rightShoulder.x) / 2;
