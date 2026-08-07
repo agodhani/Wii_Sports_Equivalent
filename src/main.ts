@@ -5,7 +5,7 @@ import { Hud } from './render/hud';
 
 const video = document.getElementById('webcam') as HTMLVideoElement;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
-const root = document.body;
+const root = document.getElementById('hud') as HTMLElement;
 
 async function main() {
   await startCamera(video);
