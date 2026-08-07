@@ -1,0 +1,22 @@
+{
+  "name": "webcam-tennis",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "three": "^0.159.0",
+    "@mediapipe/tasks-vision": "^0.10.0"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^1.0.0",
+    "@types/three": "^0.159.0"
+  }
+}
