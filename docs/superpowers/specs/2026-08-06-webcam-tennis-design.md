@@ -60,7 +60,9 @@ Emits `SwingEvent { side: 'forehand' | 'backhand', speed, direction, timestamp }
 - Side: which side of the torso the wrist crosses/accelerates through,
   interpreted using the handedness chosen at calibration.
 - Speed: peak normalized wrist velocity during the forward phase.
-- Direction: derived from swing path angle (used as a secondary aim input).
+- Direction: derived from swing path angle. Timing is the primary aim input;
+  swing direction applies a small modifier on top (max ±20% of court width),
+  so aim stays predictable even when path detection is noisy.
 
 Unit-testable with recorded or synthetic landmark sequences.
 
