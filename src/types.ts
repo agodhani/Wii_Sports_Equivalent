@@ -3,6 +3,7 @@ export interface Vec3 { x: number; y: number; z: number }
 
 export type Side = 'forehand' | 'backhand';
 export type Handedness = 'left' | 'right';
+export type CpuDifficulty = 'easy' | 'hard';
 
 /** One smoothed frame of body tracking, in pose space (+x = player's right). */
 export interface PoseFrame {

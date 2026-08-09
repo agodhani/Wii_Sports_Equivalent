@@ -7,7 +7,7 @@ import { resolveHit, CONTACT_WINDOW_S, type IncomingBall } from './game/hit';
 import { cpuReturn } from './game/cpu';
 import { Scene } from './render/scene';
 import { Hud } from './render/hud';
-import type { Handedness, PoseFrame, ShotCommand, Vec2, Vec3 } from './types';
+import type { CpuDifficulty, Handedness, PoseFrame, ShotCommand, Vec2, Vec3 } from './types';
 
 const PLAYER_Z = 11;
 const CPU_Z = -11;
@@ -53,6 +53,7 @@ async function main() {
   // ---- runtime state ----
   let detector: SwingDetector | null = null;
   let handedness: Handedness = 'right';
+  let difficulty: CpuDifficulty = 'hard';
   let ball: BallState | null = null;
   let incoming: IncomingBall | null = null;   // set while ball travels toward player
   let pendingShot: ShotCommand | null = null; // player's accepted shot awaiting contact
@@ -73,8 +74,11 @@ async function main() {
   let prevFrame: PoseFrame | null = null;
   let countdownEnd: number | null = null;
 
-  match.start();
-  hud.showOverlay('Calibration', 'Step back until your whole upper body has green dots');
+  hud.showHome((chosen) => {
+    difficulty = chosen;
+    match.start();
+    hud.showOverlay('Calibration', 'Step back until your whole upper body has green dots');
+  });
 
   /**
    * Map a pose-space landmark onto court space beside the player avatar.
@@ -295,7 +299,7 @@ async function main() {
         // ball reaches CPU's strike plane
         if (match.phase === 'rally' && ball.vel.z < 0 && ball.pos.z <= CPU_Z + 1.2) {
           const reachTime = 1.0; // CPU had the ball's flight to react; fixed budget
-          const ret = cpuReturn(ball.pos.x, cpuX, reachTime, Math.random);
+          const ret = cpuReturn(ball.pos.x, cpuX, reachTime, Math.random, difficulty);
           if (ret) {
             cpuX = ball.pos.x; // CPU moved to the ball to strike it
             launch({ x: ball.pos.x, y: Math.max(ball.pos.y, 0.8), z: ball.pos.z }, ret, now);

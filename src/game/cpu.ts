@@ -1,17 +1,24 @@
-import type { ShotCommand } from '../types';
+import type { ShotCommand, CpuDifficulty } from '../types';
 
-const CPU_SPEED = 4;      // m/s
-const ERROR_RATE = 0.12;
+// 'hard' matches the single difficulty this was tuned at before difficulty
+// selection existed, kept as the default so existing behavior is unchanged
+// for any caller that doesn't pass a difficulty.
+const PRESETS: Record<CpuDifficulty, { speed: number; errorRate: number }> = {
+  easy: { speed: 3, errorRate: 0.32 },
+  hard: { speed: 4, errorRate: 0.12 },
+};
 
 export function cpuReturn(
   landingX: number,
   cpuX: number,
   reachTime: number,
   rand: () => number = Math.random,
+  difficulty: CpuDifficulty = 'hard',
 ): ShotCommand | null {
-  if (Math.abs(landingX - cpuX) / CPU_SPEED > reachTime) return null;
+  const { speed, errorRate } = PRESETS[difficulty];
+  if (Math.abs(landingX - cpuX) / speed > reachTime) return null;
 
-  if (rand() < ERROR_RATE) {
+  if (rand() < errorRate) {
     const left = rand() < 0.5;
     return { targetX: left ? -4.6 : 4.6, targetZ: 8, flightTime: 1.3 };
   }

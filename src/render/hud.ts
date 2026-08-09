@@ -1,4 +1,4 @@
-import type { PoseFrame } from '../types';
+import type { PoseFrame, CpuDifficulty } from '../types';
 
 export class Hud {
   private score: HTMLDivElement;
@@ -18,6 +18,43 @@ export class Hud {
         background:rgba(0,0,0,.65);color:#fff;text-align:center;flex-direction:column">
         <div id="overlay-main" style="font-size:40px;font-weight:700"></div>
         <div id="overlay-sub" style="font-size:20px;margin-top:12px;opacity:.85"></div>
+      </div>
+      <div id="home" style="position:fixed;inset:0;display:none;place-items:center;
+        background:rgba(10,14,24,.88);color:#fff;text-align:center;
+        font-family:system-ui,sans-serif">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:28px;
+          max-width:360px;padding:0 20px">
+          <div>
+            <div style="font-size:42px;font-weight:800;text-shadow:0 2px 8px #000">Webcam Tennis</div>
+            <div style="font-size:14px;opacity:.7;margin-top:6px">
+              Swing your hand to play — no controller needed</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;width:100%">
+            <button id="home-solo" style="padding:14px 0;font-size:17px;font-weight:700;
+              border:none;border-radius:8px;background:#ffe14d;color:#1a1a1a;cursor:pointer">
+              Play Solo (vs CPU)</button>
+            <button id="home-multi" disabled title="Coming soon" style="padding:14px 0;
+              font-size:15px;font-weight:600;border:1px solid rgba(255,255,255,.25);
+              border-radius:8px;background:transparent;color:rgba(255,255,255,.4);
+              cursor:not-allowed">
+              Play Multiplayer
+              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;
+                margin-left:8px;background:rgba(255,255,255,.12);padding:2px 6px;
+                border-radius:4px">Coming soon</span></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:12px;text-transform:uppercase;letter-spacing:.07em;
+              opacity:.65">CPU:</span>
+            <div style="display:flex;border:1px solid rgba(255,255,255,.25);
+              border-radius:6px;overflow:hidden">
+              <button data-difficulty="easy" class="diff-btn" style="padding:6px 16px;
+                border:none;cursor:pointer;font-size:13px">Easy</button>
+              <button data-difficulty="hard" class="diff-btn" style="padding:6px 16px;
+                border:none;border-left:1px solid rgba(255,255,255,.25);cursor:pointer;
+                font-size:13px">Hard</button>
+            </div>
+          </div>
+        </div>
       </div>
       <canvas id="preview" width="160" height="120" style="position:fixed;right:16px;
         bottom:16px;border:2px solid rgba(255,255,255,.5);border-radius:8px"></canvas>
@@ -58,6 +95,36 @@ export class Hud {
 
   hideSwingMeter(): void {
     (this.root.querySelector('#meter') as HTMLElement).style.display = 'none';
+  }
+
+  /**
+   * Show the home screen. Resolves once the player picks a mode: solo play
+   * calls back with the chosen CPU difficulty. Multiplayer has no game behind
+   * it yet, so its button stays disabled rather than pretending to work.
+   */
+  showHome(onPlaySolo: (difficulty: CpuDifficulty) => void): void {
+    const home = this.root.querySelector('#home') as HTMLElement;
+    home.style.display = 'grid';
+    const soloBtn = this.root.querySelector('#home-solo') as HTMLButtonElement;
+    const diffBtns = Array.from(this.root.querySelectorAll('.diff-btn')) as HTMLButtonElement[];
+
+    let difficulty: CpuDifficulty = 'hard';
+    const paint = () => {
+      for (const b of diffBtns) {
+        const active = b.dataset.difficulty === difficulty;
+        b.style.background = active ? '#ffe14d' : 'transparent';
+        b.style.color = active ? '#1a1a1a' : '#fff';
+        b.style.fontWeight = active ? '700' : '400';
+      }
+    };
+    paint();
+    for (const b of diffBtns) {
+      b.onclick = () => { difficulty = b.dataset.difficulty as CpuDifficulty; paint(); };
+    }
+    soloBtn.onclick = () => {
+      home.style.display = 'none';
+      onPlaySolo(difficulty);
+    };
   }
 
   /** Smoothed frames-per-second, shown top-right — the main hardware-fit signal. */
