@@ -78,30 +78,59 @@ stands: peer-to-peer, with a TURN server as NAT-traversal fallback.
 
 ---
 
-## 3. Doubles (2v2, two players per team)
+## 3. Doubles
 
-**Problem.** Requested alongside multiplayer: teams of two sharing a side
-of the court.
+Two distinct modes hide under "doubles." They have very different scope, so
+they're split rather than treated as one feature.
 
-**Proposal.** Depends on (2) being solved first — doubles is multiplayer
-with more participants, not a separate networking model. Once two remote
-players can rally, doubles adds:
-- A second avatar per side in `src/render/scene.ts` (currently one `player`
-  mesh and one `cpu` mesh — this becomes up to 4 tracked players).
-- Court-side positioning/coverage logic: today `playerX` auto-runs to the
-  ball (`src/main.ts`, the auto-run lerp in the rally block); with two
-  players per side, something has to decide who goes for the ball, or both
-  players' own swings simply become live and whichever is in range at
-  contact time resolves the hit.
-- A meaningfully bigger scope than singles multiplayer: 4 camera feeds, 4
-  pose trackers, 4 swing detectors running somewhere. Worth prototyping
-  singles multiplayer end-to-end first and revisiting doubles as a
-  follow-on rather than building both at once.
+### 3a. Doubles, Wii Tennis-style (one player controls both avatars on their side)
 
-**Open question.** Is doubles 4 separate webcams (4 people, 4 devices) or 2
-webcams with 2 people sharing a frame each? The latter needs `numPoses` in
-`src/tracking/pose.ts` raised above 1 and per-player landmark disambiguation
-— a materially different (and harder) tracking problem than the former.
+**Problem.** A team of two on-screen characters, but still one human, one
+webcam, one tracked swing — the way Wii Tennis doubles actually works: your
+Mii and your partner Mii both stand on your side, the game auto-positions
+both, and whichever one is nearest the ball swings when you swing.
+
+**Proposal.** This is a **local single-player feature, not a networking
+feature** — it doesn't depend on (2) at all, and could ship before
+multiplayer exists (e.g. player-plus-partner vs. a CPU pair). It extends
+what already exists rather than requiring new tracking or new avatars from
+new humans:
+- A second avatar on the player's side in `src/render/scene.ts` alongside
+  the existing `player` mesh, auto-positioned the same way `playerX`
+  already auto-runs toward the ball today (`src/main.ts`'s rally block) —
+  now splitting court coverage between two avatars instead of centering one.
+- At contact time, the single `SwingEvent` from the one tracked player
+  applies to whichever avatar is currently nearest the ball — the same
+  "is this swing in range" logic `resolveHit`/the contact-window check
+  already does, just arbitrating between two positions instead of one.
+- The CPU side could symmetrically get a second `cpuReturn`-controlled
+  avatar, so single-player-vs-CPU can be doubles too, independent of
+  multiplayer ever landing.
+
+**Open question.** Coverage logic: split the court in half and give each
+avatar a fixed zone, or always send the nearer avatar and let positioning
+emerge from play? The latter feels more like real doubles but needs the
+same kind of tuning pass swing detection just went through.
+
+### 3b. Four-player doubles (each of four humans controls one avatar) — lowest priority
+
+**Problem.** The full 2v2 version: four separate people, four webcams, four
+tracked swings.
+
+**Proposal.** Depends on (2) — this is multiplayer networking extended to
+four participants, plus 3a's court-coverage concept but with each avatar
+driven by its own remote player instead of one player's swing arbitrating
+between two. Meaningfully bigger scope than everything else in this
+document: 4 camera feeds, 4 pose trackers, 4 swing detectors, and a
+4-peer networking topology instead of 2. Build only after (2) works
+end-to-end and 3a has proven the two-avatars-per-side rendering and
+coverage logic locally.
+
+**Open question.** Four separate devices (most likely, one per person), or
+could two people ever share one webcam frame? The latter needs `numPoses`
+in `src/tracking/pose.ts` raised above 1 and per-player landmark
+disambiguation — a materially harder tracking problem, and not necessary
+for the common case of four people on four laptops.
 
 ---
 
@@ -137,11 +166,14 @@ Roughly in order of what unblocks the most other work:
    on top.
 2. **Racket-relative hit detection** (§1) — standalone, improves single
    player regardless of what else ships, good next prototype.
-3. **Multiplayer, singles** (§2) — the real architecture decision (host-
+3. **Doubles, Wii Tennis-style** (§3a) — also standalone and local-only; can
+   land any time after (1)/(2), independent of whether multiplayer exists yet.
+4. **Multiplayer, singles** (§2) — the real architecture decision (host-
    authoritative vs. lockstep) needs its own brainstorming session before
    any code.
-4. **Doubles** (§3) — follow-on to (2), only after singles multiplayer works
-   end-to-end.
+5. **Four-player doubles** (§3b) — lowest priority. Depends on both (4) and
+   the coverage logic proven in (3a); the largest scope item in this
+   document, so it's last regardless of how the rest of the order shifts.
 
 Each of these should go through a normal brainstorm → spec → plan cycle
 before implementation, same as the original game build
