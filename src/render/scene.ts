@@ -3,12 +3,19 @@ import type { Vec3 } from '../types';
 
 const COURT_HALF_W = 4.11;
 const COURT_HALF_L = 11.9;
+// Blob shadow under the ball: a depth cue for the player's camera without
+// paying for shadow maps. It shrinks and fades as the ball climbs.
+const SHADOW_Y = 0.025; // just above the court lines (0.02) to avoid z-fighting
+const SHADOW_RADIUS = 0.16;
+const SHADOW_MAX_OPACITY = 0.45;
+const SHADOW_FALLOFF = 0.3; // per metre of ball height
 
 export class Scene {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private ball: THREE.Mesh;
+  private ballShadow: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
   private player: THREE.Mesh;
   private cpu: THREE.Mesh;
   private upperArm: THREE.Mesh;
@@ -71,6 +78,15 @@ export class Scene {
       new THREE.MeshLambertMaterial({ color: 0xd8f542 }),
     );
     this.scene.add(this.ball);
+    this.ballShadow = new THREE.Mesh(
+      new THREE.CircleGeometry(SHADOW_RADIUS, 20),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000, transparent: true, opacity: SHADOW_MAX_OPACITY, depthWrite: false,
+      }),
+    );
+    this.ballShadow.rotation.x = -Math.PI / 2;
+    this.ballShadow.position.y = SHADOW_Y;
+    this.scene.add(this.ballShadow);
 
     const avatar = (color: number) =>
       new THREE.Mesh(
@@ -151,8 +167,15 @@ export class Scene {
 
   setArmVisible(v: boolean): void { this.arm.visible = v; }
 
-  setBall(pos: Vec3): void { this.ball.position.set(pos.x, pos.y, pos.z); }
-  setBallVisible(v: boolean): void { this.ball.visible = v; }
+  setBall(pos: Vec3): void {
+    this.ball.position.set(pos.x, pos.y, pos.z);
+    // Higher ball -> smaller, fainter shadow; k is 1 at the ground.
+    const k = 1 / (1 + Math.max(0, pos.y) * SHADOW_FALLOFF);
+    this.ballShadow.position.set(pos.x, SHADOW_Y, pos.z);
+    this.ballShadow.scale.setScalar(0.5 + 0.5 * k);
+    this.ballShadow.material.opacity = SHADOW_MAX_OPACITY * k;
+  }
+  setBallVisible(v: boolean): void { this.ball.visible = v; this.ballShadow.visible = v; }
   setPlayerX(x: number): void { this.player.position.x = x; }
   setCpuX(x: number): void { this.cpu.position.x = x; }
 

@@ -1,12 +1,13 @@
 import { startCamera } from './camera';
 import { PoseTracker } from './tracking/pose';
 import { SwingDetector, TRIGGER_SCORE } from './swing/detector';
-import { Match } from './game/match';
+import { Match, type Winner } from './game/match';
 import { stepBall, timeToReachZ, launchBall, type BallState } from './game/ball';
 import { resolveHit, CONTACT_WINDOW_S, type IncomingBall } from './game/hit';
 import { cpuReturn } from './game/cpu';
 import { Scene } from './render/scene';
 import { Hud } from './render/hud';
+import { Sfx } from './audio/sfx';
 import type { CpuDifficulty, Handedness, PoseFrame, ShotCommand, Vec2, Vec3 } from './types';
 
 const PLAYER_Z = 11;
@@ -23,6 +24,11 @@ const WAVE_TRIGGER_SPEED = 2.5;
 const ARM_SCALE = 0.55;
 const SHOULDER_HEIGHT = 1.45;
 
+// The avatar auto-runs to stand this far beside an incoming ball rather than
+// under it, so the ball visibly passes on the forehand or backhand side the
+// game decided at launch (Wii Tennis style). Clears the 0.3 m avatar radius.
+const BALL_SIDE_OFFSET = 0.6;
+
 const video = document.getElementById('webcam') as HTMLVideoElement;
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const hudRoot = document.getElementById('hud') as HTMLElement;
@@ -35,6 +41,7 @@ async function main() {
   const scene = new Scene(canvas);
   hud = new Hud(hudRoot, video);
   const match = new Match();
+  const sfx = new Sfx();
 
   hud.showOverlay('Webcam Tennis', 'Allow camera access to play');
   try {
@@ -57,6 +64,7 @@ async function main() {
   let ball: BallState | null = null;
   let incoming: IncomingBall | null = null;   // set while ball travels toward player
   let pendingShot: ShotCommand | null = null; // player's accepted shot awaiting contact
+  let pendingPower = 0; // 0..1 swing power of pendingShot, for the contact sound
   let cpuX = 0; // CPU's actual standing position on court (updated only when CPU strikes)
   let playerX = 0;
   let serveAt = 0;
@@ -75,6 +83,7 @@ async function main() {
   let countdownEnd: number | null = null;
 
   hud.showHome((chosen) => {
+    sfx.unlock(); // the Play click is the user gesture browsers require for audio
     difficulty = chosen;
     match.start();
     hud.showOverlay('Calibration', 'Step back until your whole upper body has green dots');
@@ -95,6 +104,12 @@ async function main() {
     };
   }
 
+  /** Award a point and play the matching crowd reaction. */
+  function awardPoint(w: Winner) {
+    match.pointTo(w);
+    sfx.point(w === 'player');
+  }
+
   function beginServe(t: number) {
     serveAt = t + 1.0;
     ball = null;
@@ -109,6 +124,7 @@ async function main() {
     window.removeEventListener('keydown', onRestartKeydown);
     window.removeEventListener('click', restart);
     restartBound = false;
+    sfx.unlock();
     match.reset();
     match.start();
     match.calibrated();
@@ -245,6 +261,14 @@ async function main() {
     }
 
     if (!paused) {
+      // Feed the detector every frame of play, not just while a ball is incoming,
+      // so the swing meter stays live and its history never goes stale between
+      // shots. The swing is acted on only in the rally block below.
+      const swing =
+        (match.phase === 'serving' || match.phase === 'rally') && frame && detector
+          ? detector.update(frame)
+          : null;
+
       // ---- serving: CPU tosses the ball toward the player ----
       if (match.phase === 'serving' && now >= serveAt) {
         const shot: ShotCommand = {
@@ -260,25 +284,27 @@ async function main() {
       if (match.phase === 'rally' && ball) {
         const preVelY = ball.vel.y;
         ball = stepBall(ball, dt);
+        if (preVelY < 0 && ball.vel.y > 0) sfx.bounce();
         if (preVelY < 0 && ball.vel.y > 0 && !bouncedSinceLaunch) {
           bouncedSinceLaunch = true;
           if (Math.abs(ball.pos.x) > COURT_HALF_W || Math.abs(ball.pos.z) > 11.9) {
-            match.pointTo(ball.vel.z > 0 ? 'player' : 'cpu');
+            awardPoint(ball.vel.z > 0 ? 'player' : 'cpu');
             hud.flash(ball.vel.z > 0 ? 'Out — your point!' : 'Out!');
           }
         }
 
-        // player swing?
-        if (match.phase === 'rally' && frame && detector && incoming) {
-          const swing = detector.update(frame);
+        // player swing? (only a ball on its way to the player can be hit)
+        if (match.phase === 'rally' && incoming) {
           if (swing) {
             const shot = resolveHit(swing, incoming);
             if (shot) {
               const off = Math.abs(swing.timestamp - incoming.idealContactTime);
               hud.flash(off < 0.05 ? 'Nice!' : swing.timestamp < incoming.idealContactTime ? 'Early!' : 'Late!');
               pendingShot = shot; // strike when the ball reaches the plane
+              pendingPower = Math.max(0, Math.min(1, (swing.speed - 4) / 8));
             } else if (swing.side !== incoming.ballSide) {
               hud.flash('Wrong side!');
+              sfx.miss();
             }
           }
         }
@@ -286,12 +312,13 @@ async function main() {
         // ball reaches the player's strike plane
         if (match.phase === 'rally' && ball.vel.z > 0 && ball.pos.z >= PLAYER_Z - 1.2) {
           if (pendingShot) {
+            sfx.hit(pendingPower);
             launch({ x: ball.pos.x, y: Math.max(ball.pos.y, 0.8), z: ball.pos.z }, pendingShot, now);
           } else if (incoming && now <= incoming.idealContactTime + CONTACT_WINDOW_S) {
             // grace: swing may still arrive this window — keep flying briefly
           } else {
             // missed
-            match.pointTo('cpu');
+            awardPoint('cpu');
             hud.flash('Miss!');
           }
         }
@@ -302,9 +329,10 @@ async function main() {
           const ret = cpuReturn(ball.pos.x, cpuX, reachTime, Math.random, difficulty);
           if (ret) {
             cpuX = ball.pos.x; // CPU moved to the ball to strike it
+            sfx.hit(0.5);
             launch({ x: ball.pos.x, y: Math.max(ball.pos.y, 0.8), z: ball.pos.z }, ret, now);
           } else {
-            match.pointTo('player');
+            awardPoint('player');
             hud.flash('Winner!');
           }
         }
@@ -314,12 +342,19 @@ async function main() {
         if (match.phase === 'rally' && now - lastLaunchAt > 0.1 &&
             (Math.abs(ball.pos.x) > 8 || Math.abs(ball.pos.z) > 16)) {
           // whoever hit it last loses the point: ball moving +z = CPU hit it out
-          match.pointTo(ball.vel.z > 0 ? 'player' : 'cpu');
+          awardPoint(ball.vel.z > 0 ? 'player' : 'cpu');
           hud.flash(ball.vel.z > 0 ? 'Out — your point!' : 'Out!');
         }
 
-        // player avatar auto-runs toward incoming ball (frame-rate independent lerp)
-        const targetX = incoming && ball.vel.z > 0 ? ball.pos.x : 0;
+        // player avatar auto-runs beside the incoming ball (frame-rate independent
+        // lerp), leaving it on the side that ballSide expects. Court +x is the
+        // player's right (camera sits behind at +z looking toward -z), and a
+        // right-hander's forehand is on their right; left-handers are mirrored.
+        let targetX = 0;
+        if (incoming && ball.vel.z > 0) {
+          const ballOnRight = (incoming.ballSide === 'forehand') === (handedness === 'right');
+          targetX = ball.pos.x + (ballOnRight ? -BALL_SIDE_OFFSET : BALL_SIDE_OFFSET);
+        }
         playerX += (targetX - playerX) * (1 - Math.pow(0.92, dt * 60));
         scene.setPlayerX(playerX);
         const cpuDrawX = ball.vel.z < 0 ? ball.pos.x : cpuX;

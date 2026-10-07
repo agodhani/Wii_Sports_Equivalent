@@ -29,8 +29,10 @@ export class PoseTracker {
   private constructor(private landmarker: PoseLandmarker) {}
 
   static async create(): Promise<PoseTracker> {
+    // WASM version must match the installed @mediapipe/tasks-vision JS bundle;
+    // bump this together with package.json.
     const fileset = await FilesetResolver.forVisionTasks(
-      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm',
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm',
     );
     const landmarker = await PoseLandmarker.createFromOptions(fileset, {
       baseOptions: {
