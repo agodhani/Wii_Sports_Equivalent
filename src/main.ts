@@ -6,6 +6,13 @@ import { Match, type Winner } from './game/match';
 import { stepBall, timeToReachZ, launchBall, predictAtZ, type BallState } from './game/ball';
 import { resolveHit, CONTACT_WINDOW_S, type IncomingBall } from './game/hit';
 import { timingCue } from './game/timing';
+import { newStats, summarize } from './game/stats';
+import { loadRecords, saveRecords, applyResult, type Records } from './game/records';
+import {
+  encodeChallenge,
+  parseChallenge,
+  compareToChallenge,
+} from './game/challenge';
 import { cpuReturn } from './game/cpu';
 import { Scene } from './render/scene';
 import { Hud } from './render/hud';
@@ -83,7 +90,6 @@ async function main() {
   let fpsSmoothed = 60;
   let lastLaunchAt = 0;
   let bouncedSinceLaunch = false;
-  let restartBound = false;
   let demo: BallState | null = null; // attract-mode demo rally behind the home screen
   let pendingPointerSwing: SwingEvent | null = null;
   let pointerPos: Vec2 = { x: 0.5, y: 0.5 }; // latest pointer, viewport-normalized
@@ -92,6 +98,25 @@ async function main() {
   let pendingPerfect = false; // was pendingShot a Perfect! (for burst color)
   let hitStopUntil = 0; // sim-freeze end time — the "hit-stop" impact beat
   let rally = 0;
+  let stats = newStats();
+  // localStorage may be outright inaccessible (Safari private mode throws on
+  // any touch) — probe once and hand records.ts null if so.
+  const storage = (() => {
+    try {
+      const s = window.localStorage;
+      s.getItem('');
+      return s;
+    } catch {
+      return null;
+    }
+  })();
+  let records: Records = loadRecords(storage);
+  // A friend-challenge link, if this session was opened from one. Kept for
+  // the whole session so every match report can compare against it.
+  const challenge = parseChallenge(location.search);
+  let reportOpen = false;
+  let confettiUntil = 0;
+  let confettiNext = 0;
 
   // calibration state
   let visibleSince: number | null = null;
@@ -99,10 +124,13 @@ async function main() {
   let prevFrame: PoseFrame | null = null;
   let countdownEnd: number | null = null;
 
-  hud.showHome({
-    onCamera: (d) => { void startCameraMode(d); },
-    onPointer: (d) => startPointerMode(d),
-  });
+  const homeHandlers = {
+    onCamera: (d: CpuDifficulty) => { void startCameraMode(d); },
+    onPointer: (d: CpuDifficulty) => startPointerMode(d),
+    // the challenge CTA goes straight to pointer mode — instant, no camera
+    onChallenge: () => challenge && startPointerMode(challenge.cpu),
+  };
+  hud.showHome(homeHandlers, challenge);
 
   // Prefetch the pose model once the home screen has painted — no permission
   // needed for the download itself.
@@ -126,12 +154,14 @@ async function main() {
   async function startCameraMode(d: CpuDifficulty) {
     sfx.unlock(); // the Play click is the user gesture browsers require for audio
     difficulty = d;
+    stats = newStats();
     hud.showOverlay(
       'Turning on your camera',
       'Video is processed on this device and never uploaded.',
     );
     try {
-      await startCamera(video);
+      // a second run (Change mode → camera again) reuses the live stream
+      if (!video.srcObject) await startCamera(video);
     } catch (e) {
       hud.showOverlay(
         'Camera unavailable',
@@ -155,6 +185,13 @@ async function main() {
     }
     inputMode = 'camera';
     leaveMenu();
+    // clean calibration slate — a previous run leaves these primed
+    detector = null;
+    visibleSince = null;
+    waveL = 0;
+    waveR = 0;
+    prevFrame = null;
+    countdownEnd = null;
     match.start();
     hud.showPreview();
     hud.showOverlay('Calibration', 'Step back until your whole upper body has green dots');
@@ -163,6 +200,7 @@ async function main() {
   function startPointerMode(d: CpuDifficulty) {
     sfx.unlock();
     difficulty = d;
+    stats = newStats();
     inputMode = 'pointer';
     leaveMenu();
     hud.hideOverlay();
@@ -228,18 +266,130 @@ async function main() {
 
   /** Restart the match after gameover without re-running calibration. */
   function restart() {
-    window.removeEventListener('keydown', onRestartKeydown);
-    window.removeEventListener('click', restart);
-    restartBound = false;
     sfx.unlock();
+    stats = newStats();
     match.reset();
     match.start();
     match.calibrated();
     beginServe(performance.now() / 1000);
     hud.hideOverlay();
   }
-  function onRestartKeydown(e: KeyboardEvent) {
-    if (e.code === 'Space') restart();
+
+  function closeReport() {
+    reportOpen = false;
+    window.removeEventListener('keydown', onReportKeydown);
+    hud.hideReport();
+  }
+
+  function onReportKeydown(e: KeyboardEvent) {
+    if (e.code === 'Space' || e.code === 'Enter') onRematch();
+  }
+
+  function onRematch() {
+    closeReport();
+    scene.setAttractCamera(null); // back to the gameplay framing
+    restart();
+  }
+
+  function onChangeMode() {
+    closeReport();
+    match.reset(); // → 'menu': the attract rally resumes on the next frame
+    inputMode = null;
+    pendingPointerSwing = null;
+    hud.setScore(0, 0);
+    hud.setScoreVisible(false);
+    hud.setRally(0);
+    hud.hideOverlay();
+    scene.setArmVisible(false);
+    hud.showHome(homeHandlers, challenge);
+  }
+
+  /** Build the challenge link + share text and hand it to the OS or clipboard. */
+  async function onShare() {
+    const won = match.winner === 'player';
+    const cpuName = difficulty === 'easy' ? 'Easy' : 'Hard';
+    const url = `${location.origin}${location.pathname}?${encodeChallenge({
+      cpu: difficulty,
+      you: match.playerScore,
+      them: match.cpuScore,
+      rally: stats.longestRally,
+    })}`;
+    const text = won
+      ? `I beat the ${cpuName} CPU ${match.playerScore}–${match.cpuScore} in Webcam Tennis (longest rally ${stats.longestRally}). Can you beat that?`
+      : `I took ${match.playerScore} points off the ${cpuName} CPU in Webcam Tennis (longest rally ${stats.longestRally}). Can you do better?`;
+    if (navigator.share) {
+      // No timeout: on phones the sheet legitimately stays open while the
+      // player picks an app. Cancelling (AbortError) is a choice, not a
+      // failure; any other error falls through to the clipboard.
+      try {
+        await navigator.share({ title: 'Webcam Tennis', text, url });
+        hud.toast('Thanks for sharing!');
+        return;
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      hud.toast('Challenge link copied!');
+    } catch {
+      hud.toast(url); // last resort: show it so it can be copied by hand
+    }
+  }
+
+  /** First frame of gameover: freeze the mess, then bring up the report. */
+  function endMatch() {
+    hud.setScore(match.playerScore, match.cpuScore);
+    hud.clearFlash();
+    hud.setHint(null);
+    hud.hideSwingMeter();
+    scene.setBallVisible(false);
+    scene.setTimingCue(null);
+    scene.setArmVisible(false);
+
+    const won = match.winner === 'player';
+    const applied = applyResult(records, {
+      won,
+      difficulty,
+      longestRally: stats.longestRally,
+      perfects: stats.perfects,
+    });
+    records = applied.records;
+    saveRecords(storage, records);
+
+    if (won) {
+      scene.cheer(1);
+      // gold/white confetti over the player for ~1.5 s — scheduled by time in
+      // step() so it stays synced with the render loop, not wall timers.
+      confettiUntil = performance.now() / 1000 + 1.5;
+      confettiNext = 0;
+    }
+
+    hud.showReport(
+      {
+        won,
+        player: match.playerScore,
+        cpu: match.cpuScore,
+        difficulty,
+        stats: {
+          perfects: stats.perfects,
+          longestRally: stats.longestRally,
+          ...summarize(stats),
+        },
+        newBests: applied.newBests,
+        records,
+        challengeResult: challenge
+          ? compareToChallenge(
+              { you: match.playerScore, them: match.cpuScore, rally: stats.longestRally },
+              challenge,
+            )
+          : null,
+        challenge,
+      },
+      { onRematch, onShare, onChangeMode },
+    );
+    reportOpen = true;
+    window.addEventListener('keydown', onReportKeydown);
   }
 
   /** Launch the ball and, if it heads to the player, precompute the contact info. */
@@ -260,6 +410,7 @@ async function main() {
                 : 'backhand',
           }
         : null;
+      if (incoming) stats.chances++;
       // bounce-aware contact point for the reticle (timeToReachZ ignores the floor)
       incomingContact = predictAtZ(ball, PLAYER_Z - 1.2)?.pos ?? null;
     } else {
@@ -330,7 +481,7 @@ async function main() {
     } else {
       scene.setArmVisible(false);
     }
-    if (match.phase === 'menu') {
+    if (match.phase === 'menu' || match.phase === 'gameover') {
       hud.hideSwingMeter();
     } else if (inputMode === 'pointer') {
       hud.setSwingMeter(pointerDetector.strengthAt(now), POINTER_TRIGGER);
@@ -457,6 +608,8 @@ async function main() {
             const shot = resolveHit(swing, incoming);
             if (shot) {
               const off = Math.abs(swing.timestamp - incoming.idealContactTime);
+              stats.swings++;
+              stats.offSumS += off;
               const perfect = off < 0.05;
               hud.flash(
                 perfect ? 'Perfect!' : swing.timestamp < incoming.idealContactTime ? 'Early!' : 'Late!',
@@ -497,6 +650,9 @@ async function main() {
             hitStopUntil = now + 0.05 + 0.04 * pendingPower;
             scene.setTrailHot(pendingPower);
             hud.setRally(++rally);
+            stats.hits++;
+            if (pendingPerfect) stats.perfects++;
+            stats.longestRally = Math.max(stats.longestRally, rally);
             launch({ x: ball.pos.x, y: Math.max(ball.pos.y, 0.8), z: ball.pos.z }, pendingShot, now);
           } else if (incoming && now <= incoming.idealContactTime + CONTACT_WINDOW_S) {
             // grace: swing may still arrive this window — keep flying briefly
@@ -606,16 +762,21 @@ async function main() {
         beginServe(now);
       }
       if (match.phase === 'gameover') {
-        hud.setScore(match.playerScore, match.cpuScore);
-        hud.showOverlay(
-          match.winner === 'player' ? 'You win! 🎾' : 'CPU wins',
-          'Press Space or click to play again',
-        );
-        if (!restartBound) {
-          restartBound = true;
-          window.addEventListener('keydown', onRestartKeydown);
-          window.addEventListener('click', restart);
+        scene.setAttractCamera(now); // slow orbit behind the report card
+        // winner's confetti, ~6 bursts sprinkled over the celebration window
+        if (now < confettiUntil && now >= confettiNext) {
+          confettiNext = now + 0.25;
+          scene.burst(
+            {
+              x: playerX + (Math.random() - 0.5) * 3,
+              y: 1 + Math.random() * 1.6,
+              z: PLAYER_Z - 0.5 - Math.random() * 2,
+            },
+            0.5 + Math.random() * 0.4,
+            Math.random() < 0.5 ? 0xffd23f : 0xffffff,
+          );
         }
+        if (!reportOpen) endMatch();
       }
     }
 
@@ -633,6 +794,9 @@ async function main() {
         phase: match.phase,
         idealContactTime: incoming?.idealContactTime ?? null,
         now: performance.now() / 1000,
+        difficulty,
+        playerScore: match.playerScore,
+        cpuScore: match.cpuScore,
       }),
     };
   }

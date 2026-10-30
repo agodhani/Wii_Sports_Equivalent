@@ -1,7 +1,7 @@
 export type MatchPhase = 'menu' | 'calibration' | 'serving' | 'rally' | 'point' | 'gameover';
 export type Winner = 'player' | 'cpu';
 
-const WIN_SCORE = 7;
+export const WIN_SCORE = 7;
 
 export class Match {
   phase: MatchPhase = 'menu';

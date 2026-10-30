@@ -1,4 +1,23 @@
 import type { PoseFrame, CpuDifficulty } from '../types';
+import type { Challenge } from '../game/challenge';
+import type { Records } from '../game/records';
+
+export interface MatchReport {
+  won: boolean;
+  player: number;
+  cpu: number;
+  difficulty: CpuDifficulty;
+  stats: {
+    perfects: number;
+    longestRally: number;
+    hitRate: number;
+    avgOffMs: number | null;
+  };
+  newBests: string[];
+  records: Records;
+  challengeResult: 'beat' | 'tied' | 'short' | null;
+  challenge: Challenge | null;
+}
 
 const FLASH_TONES = {
   great: { color: '#ffd23f', size: 58 }, // perfect hits, winners — bigger text
@@ -13,6 +32,7 @@ export class Hud {
   private overlay: HTMLDivElement;
   private previewCtx: CanvasRenderingContext2D;
   private flashTimer = 0;
+  private toastTimer = 0;
   private rallyShown = 0;
 
   constructor(private root: HTMLElement, private video: HTMLVideoElement) {
@@ -42,6 +62,7 @@ export class Hud {
           max-width:380px;background:rgba(10,14,24,.55);backdrop-filter:blur(8px);
           -webkit-backdrop-filter:blur(8px);padding:32px 28px;border-radius:16px;
           border:1px solid rgba(255,255,255,.08)">
+          <div id="home-challenge" style="display:none;width:100%"></div>
           <div>
             <div style="font-size:42px;font-weight:800;text-shadow:0 2px 8px #000">Webcam Tennis</div>
             <div style="font-size:14px;opacity:.75;margin-top:8px">
@@ -90,6 +111,21 @@ export class Hud {
       <div id="hint" style="position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
         background:rgba(0,0,0,.6);color:#fff;font-size:15px;padding:8px 18px;
         border-radius:999px;display:none;font-family:system-ui,sans-serif"></div>
+      <div id="toast" style="position:fixed;bottom:64px;left:50%;transform:translateX(-50%);
+        background:rgba(20,24,34,.92);color:#fff;font-size:14px;padding:9px 20px;
+        border-radius:999px;display:none;font-family:system-ui,sans-serif;
+        border:1px solid rgba(255,255,255,.12);max-width:80%;overflow:hidden;
+        text-overflow:ellipsis;white-space:nowrap"></div>
+      <div id="report" style="position:fixed;inset:0;display:none;place-items:center;
+        background:radial-gradient(ellipse at center, rgba(10,14,24,.6) 0%,
+          rgba(10,14,24,.3) 55%, rgba(10,14,24,.12) 100%);color:#fff;text-align:center;
+        font-family:system-ui,sans-serif">
+        <div id="report-card" style="display:flex;flex-direction:column;align-items:center;
+          max-width:400px;width:calc(100% - 32px);max-height:calc(100vh - 32px);
+          box-sizing:border-box;background:rgba(10,14,24,.6);backdrop-filter:blur(8px);
+          -webkit-backdrop-filter:blur(8px);padding:24px 24px;border-radius:16px;
+          border:1px solid rgba(255,255,255,.08);overflow:hidden"></div>
+      </div>
       <div id="fps" style="position:fixed;top:16px;right:16px;color:#fff;
         font-family:monospace;font-size:13px;opacity:.75;text-shadow:0 1px 3px #000"></div>
       <div id="meter" style="position:fixed;left:16px;bottom:16px;width:180px;
@@ -134,19 +170,61 @@ export class Hud {
    * mode — camera (tracked arm swing) or pointer (mouse/touch swipe) — plus a
    * CPU difficulty; the matching handler is called with that difficulty.
    * Multiplayer has no game behind it yet, so its button stays disabled rather
-   * than pretending to work.
+   * than pretending to work. With a challenge link, a banner with its own CTA
+   * becomes the primary action and the camera button is demoted to outline.
+   * Safe to call repeatedly — banner and handlers are rewritten each time.
    */
-  showHome(handlers: {
-    onCamera(difficulty: CpuDifficulty): void;
-    onPointer(difficulty: CpuDifficulty): void;
-  }): void {
+  showHome(
+    handlers: {
+      onCamera(difficulty: CpuDifficulty): void;
+      onPointer(difficulty: CpuDifficulty): void;
+      onChallenge?(): void;
+    },
+    challenge?: Challenge | null,
+  ): void {
     const home = this.root.querySelector('#home') as HTMLElement;
     home.style.display = 'grid';
     const cameraBtn = this.root.querySelector('#home-camera') as HTMLButtonElement;
     const pointerBtn = this.root.querySelector('#home-pointer') as HTMLButtonElement;
+    const banner = this.root.querySelector('#home-challenge') as HTMLElement;
     const diffBtns = Array.from(this.root.querySelectorAll('.diff-btn')) as HTMLButtonElement[];
 
-    let difficulty: CpuDifficulty = 'hard';
+    if (challenge && handlers.onChallenge) {
+      const cpuName = challenge.cpu === 'easy' ? 'Easy' : 'Hard';
+      const line =
+        challenge.you > challenge.them
+          ? `A friend beat the ${cpuName} CPU ${challenge.you}–${challenge.them} (longest rally ${challenge.rally}). Can you top it?`
+          : `A friend took ${challenge.you} points off the ${cpuName} CPU. Can you do better?`;
+      banner.style.display = 'block';
+      banner.innerHTML = `
+        <div style="border:1px solid rgba(255,210,63,.7);border-radius:12px;padding:12px 14px;
+          background:rgba(255,210,63,.08);box-shadow:0 0 18px rgba(255,210,63,.18)">
+          <div style="font-size:13px;font-weight:600;line-height:1.45">${line}</div>
+          <button id="home-accept" style="width:100%;margin-top:10px;padding:11px 0;font-size:15px;
+            font-weight:700;border:none;border-radius:8px;background:#ffd23f;color:#1a1a1a;
+            cursor:pointer">
+            Accept challenge
+            <div style="font-size:11px;font-weight:500;opacity:.7;margin-top:2px">
+              Mouse / touch · starts instantly</div></button>
+        </div>`;
+      (banner.querySelector('#home-accept') as HTMLButtonElement).onclick = (e) => {
+        e.stopPropagation();
+        home.style.display = 'none';
+        handlers.onChallenge!();
+      };
+      // one primary action: camera demoted to the outline style
+      cameraBtn.style.background = 'transparent';
+      cameraBtn.style.color = '#fff';
+      cameraBtn.style.border = '1px solid rgba(255,255,255,.8)';
+    } else {
+      banner.style.display = 'none';
+      banner.innerHTML = '';
+      cameraBtn.style.background = '#ffe14d';
+      cameraBtn.style.color = '#1a1a1a';
+      cameraBtn.style.border = 'none';
+    }
+
+    let difficulty: CpuDifficulty = challenge?.cpu ?? 'hard';
     const paint = () => {
       for (const b of diffBtns) {
         const active = b.dataset.difficulty === difficulty;
@@ -165,6 +243,117 @@ export class Hud {
     };
     cameraBtn.onclick = pick(handlers.onCamera);
     pointerBtn.onclick = pick(handlers.onPointer);
+  }
+
+  /**
+   * End-of-match report card: score, challenge verdict, stat tiles, personal
+   * bests and the three exits — rematch, share a challenge, or back to home.
+   */
+  showReport(
+    r: MatchReport,
+    handlers: { onRematch(): void; onShare(): void; onChangeMode(): void },
+  ): void {
+    const report = this.root.querySelector('#report') as HTMLElement;
+    const card = this.root.querySelector('#report-card') as HTMLElement;
+    const cpuName = r.difficulty === 'easy' ? 'Easy' : 'Hard';
+    const tiles: [string, string][] = [
+      ['Perfect hits', String(r.stats.perfects)],
+      ['Longest rally', String(r.stats.longestRally)],
+      ['Hit rate', `${Math.round(r.stats.hitRate * 100)}%`],
+      ['Avg timing', r.stats.avgOffMs === null ? '—' : `±${Math.round(r.stats.avgOffMs)} ms`],
+    ];
+    let challengeLine = '';
+    if (r.challenge && r.challengeResult) {
+      const s = `${r.challenge.you}–${r.challenge.them}`;
+      const [txt, color] =
+        r.challengeResult === 'beat'
+          ? [`You beat your friend's ${s}!`, '#ffd23f']
+          : r.challengeResult === 'tied'
+            ? [`Dead even with your friend's ${s}`, '#ffffff']
+            : [`Your friend's ${s} still stands`, '#ffffff'];
+      challengeLine = `<div style="margin-top:10px;font-size:15px;font-weight:600;color:${color}">${txt}</div>`;
+    }
+    const bests = r.newBests.length
+      ? `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:14px">${r.newBests
+          .map(
+            (b) =>
+              `<span class="report-best" style="font-size:11px;font-weight:700;color:#1a1a1a;
+                background:#ffd23f;padding:4px 10px;border-radius:999px">${b}</span>`,
+          )
+          .join('')}</div>`
+      : '';
+    card.innerHTML = `
+      <div style="font-size:32px;font-weight:800;color:${r.won ? '#ffd23f' : '#fff'}">
+        ${r.won ? 'You win!' : 'CPU wins'}</div>
+      <div style="font-size:42px;font-weight:800;margin-top:2px">${r.player} — ${r.cpu}</div>
+      <div style="display:inline-block;margin-top:6px;padding:3px 12px;font-size:12px;
+        border:1px solid rgba(255,255,255,.3);border-radius:999px;opacity:.85">vs ${cpuName} CPU</div>
+      ${challengeLine}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;width:100%">
+        ${tiles
+          .map(
+            ([label, value]) => `
+          <div style="background:rgba(255,255,255,.07);border-radius:10px;padding:10px 6px">
+            <div style="font-size:21px;font-weight:800">${value}</div>
+            <div style="font-size:11px;opacity:.65;margin-top:2px">${label}</div>
+          </div>`,
+          )
+          .join('')}
+      </div>
+      ${bests}
+      <div style="font-size:11px;opacity:.55;margin-top:14px">
+        Best rally ${r.records.bestRally} · Wins vs ${cpuName} ${r.records.wins[r.difficulty]} · Streak ${r.records.streak}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:16px;width:100%">
+        <button id="report-rematch" style="padding:12px 0;font-size:16px;font-weight:700;
+          border:none;border-radius:8px;background:#ffe14d;color:#1a1a1a;cursor:pointer">
+          Rematch <span style="font-size:10px;font-weight:600;opacity:.65;border:1px solid rgba(0,0,0,.3);
+            border-radius:4px;padding:1px 6px;margin-left:4px">Space</span></button>
+        <button id="report-share" style="padding:11px 0;font-size:15px;font-weight:600;
+          border:1px solid rgba(255,255,255,.8);border-radius:8px;background:transparent;
+          color:#fff;cursor:pointer">Challenge a friend</button>
+        <button id="report-mode" style="padding:6px 0;font-size:13px;font-weight:500;
+          border:none;background:transparent;color:rgba(255,255,255,.65);cursor:pointer;
+          text-decoration:underline">Change mode</button>
+      </div>`;
+    const wire = (id: string, cb: () => void) => {
+      (card.querySelector(id) as HTMLButtonElement).onclick = (e) => {
+        e.stopPropagation();
+        cb();
+      };
+    };
+    wire('#report-rematch', handlers.onRematch);
+    wire('#report-share', handlers.onShare);
+    wire('#report-mode', handlers.onChangeMode);
+    card.querySelectorAll('.report-best').forEach((el, i) =>
+      (el as HTMLElement).animate(
+        [
+          { transform: 'scale(0.4)', opacity: 0 },
+          { transform: 'scale(1)', opacity: 1 },
+        ],
+        { duration: 220, easing: 'ease-out', delay: i * 80, fill: 'backwards' },
+      ),
+    );
+    report.style.display = 'grid';
+  }
+
+  hideReport(): void {
+    (this.root.querySelector('#report') as HTMLElement).style.display = 'none';
+  }
+
+  /** Kill any in-flight flash instantly — used when the report takes over. */
+  clearFlash(): void {
+    clearTimeout(this.flashTimer);
+    this.flashEl.style.opacity = '0';
+  }
+
+  /** Transient bottom-center notice (share/copy feedback), auto-hides ~2.5 s. */
+  toast(text: string): void {
+    const el = this.root.querySelector('#toast') as HTMLElement;
+    el.textContent = text;
+    el.style.display = 'block';
+    clearTimeout(this.toastTimer);
+    this.toastTimer = window.setTimeout(() => (el.style.display = 'none'), 2500);
   }
 
   /** Smoothed frames-per-second, shown top-right — the main hardware-fit signal. */
