@@ -29,8 +29,15 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      # build (tsc + vite) → unit tests → end-to-end regression suite
-      - run: npm run check
+      # Same gate as `npm run check`, split into steps so a failure names its stage.
+      - name: Build (tsc + vite)
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      - name: End-to-end tests
+        run: npm run test:e2e
         env:
           CI: true
 

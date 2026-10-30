@@ -14,7 +14,8 @@ export default defineConfig({
   fullyParallel: false,
   retries: 0,
   timeout: 120_000,
-  reporter: [['list']],
+  // On CI the github reporter turns each failure into an annotation on the run.
+  reporter: process.env.CI ? [['github'], ['list']] : [['list']],
   use: {
     viewport: { width: 1280, height: 800 },
     launchOptions: { args: ['--use-gl=angle', '--enable-unsafe-swiftshader'] },
