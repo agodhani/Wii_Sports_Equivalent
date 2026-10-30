@@ -269,6 +269,7 @@ async function main() {
     sfx.unlock();
     stats = newStats();
     match.reset();
+    hud.setScore(0, 0); // reset() zeroes the match but not the stale score text
     match.start();
     match.calibrated();
     beginServe(performance.now() / 1000);
@@ -797,6 +798,10 @@ async function main() {
         difficulty,
         playerScore: match.playerScore,
         cpuScore: match.cpuScore,
+        inputMode,
+        rally,
+        demoZ: demo?.pos.z ?? null,
+        reportOpen,
       }),
     };
   }
