@@ -167,6 +167,19 @@ export class Scene {
 
   setArmVisible(v: boolean): void { this.arm.visible = v; }
 
+  /**
+   * Attract-mode camera: pass a time to orbit slowly around the court behind
+   * the home screen, or null to restore the gameplay framing exactly.
+   */
+  setAttractCamera(t: number | null): void {
+    if (t === null) {
+      this.camera.position.set(0, 5.5, 17);
+    } else {
+      this.camera.position.set(Math.sin(t * 0.15) * 6, 6.5, Math.cos(t * 0.15) * 17);
+    }
+    this.camera.lookAt(0, 0, -2);
+  }
+
   setBall(pos: Vec3): void {
     this.ball.position.set(pos.x, pos.y, pos.z);
     // Higher ball -> smaller, fainter shadow; k is 1 at the ground.

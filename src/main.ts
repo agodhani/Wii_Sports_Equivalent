@@ -1,6 +1,7 @@
 import { startCamera } from './camera';
 import { PoseTracker } from './tracking/pose';
 import { SwingDetector, TRIGGER_SCORE } from './swing/detector';
+import { PointerSwingDetector, POINTER_TRIGGER } from './input/pointer';
 import { Match, type Winner } from './game/match';
 import { stepBall, timeToReachZ, launchBall, type BallState } from './game/ball';
 import { resolveHit, CONTACT_WINDOW_S, type IncomingBall } from './game/hit';
@@ -8,7 +9,15 @@ import { cpuReturn } from './game/cpu';
 import { Scene } from './render/scene';
 import { Hud } from './render/hud';
 import { Sfx } from './audio/sfx';
-import type { CpuDifficulty, Handedness, PoseFrame, ShotCommand, Vec2, Vec3 } from './types';
+import type {
+  CpuDifficulty,
+  Handedness,
+  PoseFrame,
+  ShotCommand,
+  SwingEvent,
+  Vec2,
+  Vec3,
+} from './types';
 
 const PLAYER_Z = 11;
 const CPU_Z = -11;
@@ -37,27 +46,26 @@ const hudRoot = document.getElementById('hud') as HTMLElement;
 // top-level .catch() below even if main() rejects partway through startup.
 let hud: Hud;
 
+type InputMode = 'camera' | 'pointer';
+
 async function main() {
   const scene = new Scene(canvas);
   hud = new Hud(hudRoot, video);
   const match = new Match();
   const sfx = new Sfx();
-
-  hud.showOverlay('Webcam Tennis', 'Allow camera access to play');
-  try {
-    await startCamera(video);
-  } catch (e) {
-    hud.showOverlay(
-      'Camera unavailable',
-      e instanceof Error && e.message === 'camera-denied'
-        ? 'Please allow camera access and reload the page.'
-        : 'No usable camera was found. Plug one in and reload.',
-    );
-    return;
-  }
-  const tracker = await PoseTracker.create();
+  const pointerDetector = new PointerSwingDetector();
 
   // ---- runtime state ----
+  let inputMode: InputMode | null = null; // null until the player picks on the home screen
+  let tracker: PoseTracker | null = null;
+  // The pose model downloads without needing camera permission, so it is
+  // prefetched in the background and the camera path is warm when clicked.
+  let trackerPromise: Promise<PoseTracker> | null = null;
+  const loadTracker = () =>
+    (trackerPromise ??= PoseTracker.create().catch((e) => {
+      trackerPromise = null; // allow retry instead of caching a rejection
+      throw e;
+    }));
   let detector: SwingDetector | null = null;
   let handedness: Handedness = 'right';
   let difficulty: CpuDifficulty = 'hard';
@@ -75,6 +83,10 @@ async function main() {
   let lastLaunchAt = 0;
   let bouncedSinceLaunch = false;
   let restartBound = false;
+  let demo: BallState | null = null; // attract-mode demo rally behind the home screen
+  let pendingPointerSwing: SwingEvent | null = null;
+  let pointerPos: Vec2 = { x: 0.5, y: 0.5 }; // latest pointer, viewport-normalized
+  let hintCleared = false;
 
   // calibration state
   let visibleSince: number | null = null;
@@ -82,11 +94,96 @@ async function main() {
   let prevFrame: PoseFrame | null = null;
   let countdownEnd: number | null = null;
 
-  hud.showHome((chosen) => {
+  hud.showHome({
+    onCamera: (d) => { void startCameraMode(d); },
+    onPointer: (d) => startPointerMode(d),
+  });
+
+  // Prefetch the pose model once the home screen has painted — no permission
+  // needed for the download itself.
+  setTimeout(() => loadTracker().catch(() => {}), 1500);
+
+  /** Leave the menu: stop the demo rally and put the camera back in play framing. */
+  function leaveMenu() {
+    demo = null;
+    playerX = 0;
+    scene.setPlayerX(0);
+    scene.setBallVisible(false);
+    scene.setAttractCamera(null);
+    hud.setScoreVisible(true);
+  }
+
+  const pointerFallback = (d: CpuDifficulty) => ({
+    label: 'Play with mouse / touch instead',
+    onClick: () => startPointerMode(d),
+  });
+
+  async function startCameraMode(d: CpuDifficulty) {
     sfx.unlock(); // the Play click is the user gesture browsers require for audio
-    difficulty = chosen;
+    difficulty = d;
+    hud.showOverlay(
+      'Turning on your camera',
+      'Video is processed on this device and never uploaded.',
+    );
+    try {
+      await startCamera(video);
+    } catch (e) {
+      hud.showOverlay(
+        'Camera unavailable',
+        e instanceof Error && e.message === 'camera-denied'
+          ? 'Please allow camera access and reload the page.'
+          : 'No usable camera was found. Plug one in and reload.',
+        pointerFallback(d),
+      );
+      return;
+    }
+    hud.showOverlay('Loading motion tracking…', 'First load can take a few seconds');
+    try {
+      tracker = await loadTracker();
+    } catch {
+      hud.showOverlay(
+        'Could not load motion tracking',
+        'Check your connection, or play without a camera.',
+        pointerFallback(d),
+      );
+      return;
+    }
+    inputMode = 'camera';
+    leaveMenu();
     match.start();
+    hud.showPreview();
     hud.showOverlay('Calibration', 'Step back until your whole upper body has green dots');
+  }
+
+  function startPointerMode(d: CpuDifficulty) {
+    sfx.unlock();
+    difficulty = d;
+    inputMode = 'pointer';
+    leaveMenu();
+    hud.hideOverlay();
+    match.start();
+    match.calibrated(); // pointer input needs no calibration
+    beginServe(performance.now() / 1000);
+    hud.setHint('Swipe sideways across the screen as the ball reaches you');
+  }
+
+  window.addEventListener('pointermove', (e) => {
+    if (inputMode !== 'pointer') return;
+    // Coalesced events recover the sub-frame motion Chrome batches per frame —
+    // the difference between a 120 Hz and a 60 Hz swing measurement.
+    const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for (const ev of events.length ? events : [e]) {
+      pointerPos = {
+        x: ev.clientX / window.innerWidth,
+        y: ev.clientY / window.innerHeight,
+      };
+      const swing = pointerDetector.update({
+        t: ev.timeStamp / 1000, // same clock as performance.now()
+        x: pointerPos.x,
+        y: pointerPos.y,
+      });
+      if (swing) pendingPointerSwing = swing;
+    }
   });
 
   /**
@@ -181,13 +278,36 @@ async function main() {
       fpsSmoothed += (1 / rawDt - fpsSmoothed) * 0.1;
     }
     hud.setFps(fpsSmoothed);
-    const frame = tracker.process(video, now);
-    hud.setPreviewFrame(frame);
-    const lost = !frame || frame.trackingLost;
+    const frame = inputMode === 'camera' && tracker ? tracker.process(video, now) : null;
+    if (inputMode === 'camera') hud.setPreviewFrame(frame);
+    // Tracking loss only pauses the camera game — pointer mode has nothing to lose.
+    const lost = inputMode === 'camera' && (!frame || frame.trackingLost);
 
     // Mirror the playing arm and its racket into the scene every frame, in every
     // phase — during calibration it doubles as proof that tracking is working.
-    if (frame && !lost) {
+    if (inputMode === 'pointer' && match.phase !== 'menu') {
+      // The racket follows the pointer: shoulder fixed beside the avatar, wrist
+      // tracking the pointer across a ~2.4 m reach, clamped to arm's length.
+      const shoulder: Vec3 = { x: playerX + 0.25, y: SHOULDER_HEIGHT, z: PLAYER_Z - 0.35 };
+      const wrist: Vec3 = {
+        x: playerX + (pointerPos.x - 0.5) * 2.4,
+        y: SHOULDER_HEIGHT - (pointerPos.y - 0.5) * 1.6,
+        z: PLAYER_Z - 0.35,
+      };
+      const dx = wrist.x - shoulder.x;
+      const dy = wrist.y - shoulder.y;
+      const reach = Math.hypot(dx, dy);
+      if (reach > 0.75) {
+        wrist.x = shoulder.x + (dx / reach) * 0.75;
+        wrist.y = shoulder.y + (dy / reach) * 0.75;
+      }
+      const elbow: Vec3 = {
+        x: (shoulder.x + wrist.x) / 2,
+        y: (shoulder.y + wrist.y) / 2 - 0.15,
+        z: shoulder.z,
+      };
+      scene.setArm(shoulder, elbow, wrist);
+    } else if (frame && !lost) {
       const pick = (r: Vec2, l: Vec2) => (handedness === 'right' ? r : l);
       scene.setArm(
         toCourt(pick(frame.rightShoulder, frame.leftShoulder), frame),
@@ -197,7 +317,13 @@ async function main() {
     } else {
       scene.setArmVisible(false);
     }
-    if (detector) hud.setSwingMeter(detector.strength, TRIGGER_SCORE);
+    if (match.phase === 'menu') {
+      hud.hideSwingMeter();
+    } else if (inputMode === 'pointer') {
+      hud.setSwingMeter(pointerDetector.strengthAt(now), POINTER_TRIGGER);
+    } else if (detector) {
+      hud.setSwingMeter(detector.strength, TRIGGER_SCORE);
+    }
 
     // ---- calibration phase ----
     if (match.phase === 'calibration' && frame) {
@@ -263,11 +389,23 @@ async function main() {
     if (!paused) {
       // Feed the detector every frame of play, not just while a ball is incoming,
       // so the swing meter stays live and its history never goes stale between
-      // shots. The swing is acted on only in the rally block below.
-      const swing =
+      // shots. The swing is acted on only in the rally block below. A pointer
+      // swing is consumed the frame after it was emitted and always cleared, so
+      // a stale flick can never apply to a later ball.
+      let swing: SwingEvent | null = null;
+      if (inputMode === 'pointer') {
+        if (match.phase === 'serving' || match.phase === 'rally') {
+          swing = pendingPointerSwing;
+          // A pointer flick has no body side to infer — take the side the ball
+          // demands so "Wrong side!" can never fire (Wii-casual auto side).
+          if (swing) swing = { ...swing, side: incoming?.ballSide ?? 'forehand' };
+        }
+        pendingPointerSwing = null;
+      } else if (
         (match.phase === 'serving' || match.phase === 'rally') && frame && detector
-          ? detector.update(frame)
-          : null;
+      ) {
+        swing = detector.update(frame);
+      }
 
       // ---- serving: CPU tosses the ball toward the player ----
       if (match.phase === 'serving' && now >= serveAt) {
@@ -302,6 +440,10 @@ async function main() {
               hud.flash(off < 0.05 ? 'Nice!' : swing.timestamp < incoming.idealContactTime ? 'Early!' : 'Late!');
               pendingShot = shot; // strike when the ball reaches the plane
               pendingPower = Math.max(0, Math.min(1, (swing.speed - 4) / 8));
+              if (!hintCleared) { // first accepted swing — the how-to hint has done its job
+                hintCleared = true;
+                hud.setHint(null);
+              }
             } else if (swing.side !== incoming.ballSide) {
               hud.flash('Wrong side!');
               sfx.miss();
@@ -361,6 +503,47 @@ async function main() {
         scene.setCpuX(cpuDrawX * 0.9);
 
         scene.setBall(ball.pos);
+        scene.setBallVisible(true);
+      }
+
+      // ---- attract mode: CPU-vs-CPU demo rally behind the home screen ----
+      if (match.phase === 'menu') {
+        scene.setAttractCamera(now);
+        if (!demo) {
+          demo = launchBall(
+            { x: 0, y: 1.2, z: CPU_Z },
+            { targetX: -2 + 4 * Math.random(), targetZ: 8.5, flightTime: 1.5 },
+          );
+        }
+        demo = stepBall(demo, dt);
+        if (demo.vel.z > 0 && demo.pos.z >= PLAYER_Z - 1.2) {
+          // the demo "player" returns it toward the CPU
+          demo = launchBall(
+            { x: demo.pos.x, y: Math.max(demo.pos.y, 0.8), z: demo.pos.z },
+            {
+              targetX: -3 + 6 * Math.random(),
+              targetZ: -(7 + 3 * Math.random()),
+              flightTime: 1.1 + 0.3 * Math.random(),
+            },
+          );
+        } else if (demo.vel.z < 0 && demo.pos.z <= CPU_Z + 1.2) {
+          // the demo "CPU" returns it toward the player
+          demo = launchBall(
+            { x: demo.pos.x, y: Math.max(demo.pos.y, 0.8), z: demo.pos.z },
+            {
+              targetX: -3 + 6 * Math.random(),
+              targetZ: 7 + 3 * Math.random(),
+              flightTime: 1.2 + 0.3 * Math.random(),
+            },
+          );
+        }
+        // Avatars chase the demo ball: player beside an incoming ball (else
+        // back to center), CPU under a ball travelling toward it.
+        const demoTargetX = demo.vel.z > 0 ? demo.pos.x - BALL_SIDE_OFFSET : 0;
+        playerX += (demoTargetX - playerX) * (1 - Math.pow(0.92, dt * 60));
+        scene.setPlayerX(playerX);
+        scene.setCpuX(demo.vel.z < 0 ? demo.pos.x * 0.9 : 0);
+        scene.setBall(demo.pos);
         scene.setBallVisible(true);
       }
 
