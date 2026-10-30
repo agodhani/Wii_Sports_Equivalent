@@ -1,17 +1,28 @@
 import type { PoseFrame, CpuDifficulty } from '../types';
 
+const FLASH_TONES = {
+  great: { color: '#ffd23f', size: 58 }, // perfect hits, winners — bigger text
+  good: { color: '#5ce65c', size: 44 },
+  bad: { color: '#ff6b6b', size: 44 },
+  info: { color: '#ffe14d', size: 44 },
+} as const;
+
 export class Hud {
   private score: HTMLDivElement;
   private flashEl: HTMLDivElement;
   private overlay: HTMLDivElement;
   private previewCtx: CanvasRenderingContext2D;
   private flashTimer = 0;
+  private rallyShown = 0;
 
   constructor(private root: HTMLElement, private video: HTMLVideoElement) {
     root.innerHTML = `
       <div id="score" style="position:fixed;top:16px;left:50%;transform:translateX(-50%);
         color:#fff;font-size:32px;font-weight:700;text-shadow:0 2px 6px #000;
         display:none">0 — 0</div>
+      <div id="rally" style="position:fixed;top:58px;left:50%;transform:translateX(-50%);
+        color:#fff;font-size:16px;opacity:.85;text-shadow:0 2px 6px #000;
+        display:none"></div>
       <div id="flash" style="position:fixed;top:30%;left:50%;transform:translateX(-50%);
         color:#ffe14d;font-size:44px;font-weight:800;text-shadow:0 2px 8px #000;
         opacity:0;transition:opacity .2s"></div>
@@ -165,11 +176,44 @@ export class Hud {
     this.score.textContent = `${player} — ${cpu}`;
   }
 
-  flash(text: string): void {
+  flash(text: string, tone: 'great' | 'good' | 'bad' | 'info' = 'info'): void {
+    const t = FLASH_TONES[tone];
     this.flashEl.textContent = text;
+    this.flashEl.style.color = t.color;
+    this.flashEl.style.fontSize = `${t.size}px`;
     this.flashEl.style.opacity = '1';
+    // Scale pop on top of the translateX(-50%) centering — the transform list
+    // in the keyframes must keep the translation or the text jumps sideways.
+    this.flashEl.animate(
+      [
+        { transform: 'translateX(-50%) scale(1.35)' },
+        { transform: 'translateX(-50%) scale(1)' },
+      ],
+      { duration: 180, easing: 'ease-out' },
+    );
     clearTimeout(this.flashTimer);
     this.flashTimer = window.setTimeout(() => (this.flashEl.style.opacity = '0'), 700);
+  }
+
+  /** Rally counter under the score — only worth showing once it means something. */
+  setRally(n: number): void {
+    const el = this.root.querySelector('#rally') as HTMLElement;
+    if (n >= 2) {
+      el.textContent = `Rally ${n}`;
+      el.style.display = 'block';
+      if (n > this.rallyShown) {
+        el.animate(
+          [
+            { transform: 'translateX(-50%) scale(1.25)' },
+            { transform: 'translateX(-50%) scale(1)' },
+          ],
+          { duration: 150, easing: 'ease-out' },
+        );
+      }
+    } else {
+      el.style.display = 'none';
+    }
+    this.rallyShown = n;
   }
 
   showOverlay(

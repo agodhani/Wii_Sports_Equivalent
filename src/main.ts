@@ -3,8 +3,9 @@ import { PoseTracker } from './tracking/pose';
 import { SwingDetector, TRIGGER_SCORE } from './swing/detector';
 import { PointerSwingDetector, POINTER_TRIGGER } from './input/pointer';
 import { Match, type Winner } from './game/match';
-import { stepBall, timeToReachZ, launchBall, type BallState } from './game/ball';
+import { stepBall, timeToReachZ, launchBall, predictAtZ, type BallState } from './game/ball';
 import { resolveHit, CONTACT_WINDOW_S, type IncomingBall } from './game/hit';
+import { timingCue } from './game/timing';
 import { cpuReturn } from './game/cpu';
 import { Scene } from './render/scene';
 import { Hud } from './render/hud';
@@ -87,6 +88,10 @@ async function main() {
   let pendingPointerSwing: SwingEvent | null = null;
   let pointerPos: Vec2 = { x: 0.5, y: 0.5 }; // latest pointer, viewport-normalized
   let hintCleared = false;
+  let incomingContact: Vec3 | null = null; // predicted contact point for the timing reticle
+  let pendingPerfect = false; // was pendingShot a Perfect! (for burst color)
+  let hitStopUntil = 0; // sim-freeze end time — the "hit-stop" impact beat
+  let rally = 0;
 
   // calibration state
   let visibleSince: number | null = null;
@@ -213,6 +218,10 @@ async function main() {
     incoming = null;
     pendingShot = null;
     cpuX = 0; // CPU resets to center to await the next serve
+    incomingContact = null;
+    rally = 0;
+    hud.setRally(0);
+    scene.setTimingCue(null);
     scene.setBallVisible(false);
   }
 
@@ -250,10 +259,13 @@ async function main() {
                 : 'backhand',
           }
         : null;
+      // bounce-aware contact point for the reticle (timeToReachZ ignores the floor)
+      incomingContact = predictAtZ(ball, PLAYER_Z - 1.2)?.pos ?? null;
     } else {
       // toward CPU: cpuX (the CPU's standing position) is updated only when
       // the CPU actually strikes the return, not from the shot's target.
       incoming = null;
+      incomingContact = null;
     }
   }
 
@@ -419,15 +431,22 @@ async function main() {
       }
 
       // ---- rally ----
+      // Hit-stop: freeze ball motion (and the avatar's run) briefly on player
+      // contact so the hit lands with a beat. Real time still flows, so the
+      // timing windows and effects don't shift.
+      const simDt = now < hitStopUntil ? 0 : dt;
       if (match.phase === 'rally' && ball) {
         const preVelY = ball.vel.y;
-        ball = stepBall(ball, dt);
-        if (preVelY < 0 && ball.vel.y > 0) sfx.bounce();
+        ball = stepBall(ball, simDt);
+        if (preVelY < 0 && ball.vel.y > 0) {
+          sfx.bounce();
+          scene.burst(ball.pos, 0, 0xcfd8e3); // small dust puff at the bounce
+        }
         if (preVelY < 0 && ball.vel.y > 0 && !bouncedSinceLaunch) {
           bouncedSinceLaunch = true;
           if (Math.abs(ball.pos.x) > COURT_HALF_W || Math.abs(ball.pos.z) > 11.9) {
             awardPoint(ball.vel.z > 0 ? 'player' : 'cpu');
-            hud.flash(ball.vel.z > 0 ? 'Out — your point!' : 'Out!');
+            hud.flash(ball.vel.z > 0 ? 'Out — your point!' : 'Out!', ball.vel.z > 0 ? 'good' : 'bad');
           }
         }
 
@@ -437,7 +456,13 @@ async function main() {
             const shot = resolveHit(swing, incoming);
             if (shot) {
               const off = Math.abs(swing.timestamp - incoming.idealContactTime);
-              hud.flash(off < 0.05 ? 'Nice!' : swing.timestamp < incoming.idealContactTime ? 'Early!' : 'Late!');
+              const perfect = off < 0.05;
+              hud.flash(
+                perfect ? 'Perfect!' : swing.timestamp < incoming.idealContactTime ? 'Early!' : 'Late!',
+                perfect ? 'great' : 'good',
+              );
+              pendingPerfect = perfect;
+              scene.popTimingCue(perfect);
               pendingShot = shot; // strike when the ball reaches the plane
               pendingPower = Math.max(0, Math.min(1, (swing.speed - 4) / 8));
               if (!hintCleared) { // first accepted swing — the how-to hint has done its job
@@ -445,23 +470,39 @@ async function main() {
                 hud.setHint(null);
               }
             } else if (swing.side !== incoming.ballSide) {
-              hud.flash('Wrong side!');
+              hud.flash('Wrong side!', 'bad');
               sfx.miss();
             }
           }
+        }
+
+        // Timing reticle: while a hittable ball is coming, shrink the outer
+        // ring onto the contact point; hide it the rest of the time.
+        if (incoming && !pendingShot && ball.vel.z > 0 && incomingContact) {
+          scene.setTimingCue({
+            pos: incomingContact,
+            ...timingCue(now, incoming.idealContactTime),
+          });
+        } else {
+          scene.setTimingCue(null);
         }
 
         // ball reaches the player's strike plane
         if (match.phase === 'rally' && ball.vel.z > 0 && ball.pos.z >= PLAYER_Z - 1.2) {
           if (pendingShot) {
             sfx.hit(pendingPower);
+            scene.burst(ball.pos, pendingPower, pendingPerfect ? 0xffd23f : 0xffffff);
+            scene.shake(0.25 + 0.35 * pendingPower);
+            hitStopUntil = now + 0.05 + 0.04 * pendingPower;
+            scene.setTrailHot(pendingPower);
+            hud.setRally(++rally);
             launch({ x: ball.pos.x, y: Math.max(ball.pos.y, 0.8), z: ball.pos.z }, pendingShot, now);
           } else if (incoming && now <= incoming.idealContactTime + CONTACT_WINDOW_S) {
             // grace: swing may still arrive this window — keep flying briefly
           } else {
             // missed
             awardPoint('cpu');
-            hud.flash('Miss!');
+            hud.flash('Miss!', 'bad');
           }
         }
 
@@ -472,10 +513,12 @@ async function main() {
           if (ret) {
             cpuX = ball.pos.x; // CPU moved to the ball to strike it
             sfx.hit(0.5);
+            scene.burst(ball.pos, 0.3, 0xaabbff);
+            scene.setTrailHot(0);
             launch({ x: ball.pos.x, y: Math.max(ball.pos.y, 0.8), z: ball.pos.z }, ret, now);
           } else {
             awardPoint('player');
-            hud.flash('Winner!');
+            hud.flash('Winner!', 'great');
           }
         }
 
@@ -485,7 +528,7 @@ async function main() {
             (Math.abs(ball.pos.x) > 8 || Math.abs(ball.pos.z) > 16)) {
           // whoever hit it last loses the point: ball moving +z = CPU hit it out
           awardPoint(ball.vel.z > 0 ? 'player' : 'cpu');
-          hud.flash(ball.vel.z > 0 ? 'Out — your point!' : 'Out!');
+          hud.flash(ball.vel.z > 0 ? 'Out — your point!' : 'Out!', ball.vel.z > 0 ? 'good' : 'bad');
         }
 
         // player avatar auto-runs beside the incoming ball (frame-rate independent
@@ -497,7 +540,7 @@ async function main() {
           const ballOnRight = (incoming.ballSide === 'forehand') === (handedness === 'right');
           targetX = ball.pos.x + (ballOnRight ? -BALL_SIDE_OFFSET : BALL_SIDE_OFFSET);
         }
-        playerX += (targetX - playerX) * (1 - Math.pow(0.92, dt * 60));
+        playerX += (targetX - playerX) * (1 - Math.pow(0.92, simDt * 60));
         scene.setPlayerX(playerX);
         const cpuDrawX = ball.vel.z < 0 ? ball.pos.x : cpuX;
         scene.setCpuX(cpuDrawX * 0.9);
@@ -505,6 +548,10 @@ async function main() {
         scene.setBall(ball.pos);
         scene.setBallVisible(true);
       }
+
+      // the reticle only lives during a rally — beginServe also clears it on
+      // point transitions, this covers every other way out (e.g. gameover).
+      if (match.phase !== 'rally') scene.setTimingCue(null);
 
       // ---- attract mode: CPU-vs-CPU demo rally behind the home screen ----
       if (match.phase === 'menu') {
@@ -518,6 +565,7 @@ async function main() {
         demo = stepBall(demo, dt);
         if (demo.vel.z > 0 && demo.pos.z >= PLAYER_Z - 1.2) {
           // the demo "player" returns it toward the CPU
+          scene.burst(demo.pos, 0.3, 0xffffff);
           demo = launchBall(
             { x: demo.pos.x, y: Math.max(demo.pos.y, 0.8), z: demo.pos.z },
             {
@@ -528,6 +576,7 @@ async function main() {
           );
         } else if (demo.vel.z < 0 && demo.pos.z <= CPU_Z + 1.2) {
           // the demo "CPU" returns it toward the player
+          scene.burst(demo.pos, 0.3, 0xffffff);
           demo = launchBall(
             { x: demo.pos.x, y: Math.max(demo.pos.y, 0.8), z: demo.pos.z },
             {
@@ -567,9 +616,24 @@ async function main() {
       }
     }
 
+    scene.update(dt); // real-time effects keep running through hit-stop
     scene.render();
     requestAnimationFrame(loop);
   }
+
+  // Play-test hook for automated runs (Playwright): lets a script read the
+  // clock and the incoming ball's ideal contact time to time its swings.
+  // import.meta.env.DEV is stripped from production builds by Vite.
+  if (import.meta.env.DEV) {
+    (window as unknown as Record<string, unknown>).__wt = {
+      state: () => ({
+        phase: match.phase,
+        idealContactTime: incoming?.idealContactTime ?? null,
+        now: performance.now() / 1000,
+      }),
+    };
+  }
+
   requestAnimationFrame(loop);
 }
 

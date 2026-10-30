@@ -22,6 +22,22 @@ export function timeToReachZ(b: BallState, z: number): number | null {
   return t > 0 ? t : null;
 }
 
+/** Simulate forward (bounces included) until the ball crosses plane z while moving toward it. null if moving away or not reached within maxT. */
+export function predictAtZ(
+  b: BallState,
+  z: number,
+  step = 1 / 240,
+  maxT = 5,
+): { t: number; pos: Vec3 } | null {
+  if (Math.abs(b.vel.z) < 1e-9 || (z - b.pos.z) * b.vel.z <= 0) return null;
+  let cur = b;
+  for (let t = step; t <= maxT; t += step) {
+    cur = stepBall(cur, step);
+    if ((cur.pos.z - z) * b.vel.z >= 0) return { t, pos: cur.pos };
+  }
+  return null;
+}
+
 export function launchBall(from: Vec3, shot: ShotCommand): BallState {
   const T = shot.flightTime;
   return {

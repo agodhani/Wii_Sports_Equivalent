@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Vec3 } from '../types';
+import type { CuePhase } from '../game/timing';
 
 const COURT_HALF_W = 4.11;
 const COURT_HALF_L = 11.9;
@@ -9,6 +10,18 @@ const SHADOW_Y = 0.025; // just above the court lines (0.02) to avoid z-fighting
 const SHADOW_RADIUS = 0.16;
 const SHADOW_MAX_OPACITY = 0.45;
 const SHADOW_FALLOFF = 0.3; // per metre of ball height
+
+const TRAIL_N = 12;
+const TRAIL_COOL = new THREE.Color(0xd8f542); // matches the ball
+const TRAIL_HOT = new THREE.Color(0xff8a3d);
+const BURST_LIFE_S = 0.45;
+const CUE_POP_S = 0.25;
+
+interface Burst {
+  points: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+  vel: Float32Array;
+  life: number;
+}
 
 export class Scene {
   private renderer: THREE.WebGLRenderer;
@@ -23,6 +36,18 @@ export class Scene {
   private racketHandle: THREE.Mesh;
   private racketHead: THREE.Mesh;
   private arm: THREE.Group;
+  // Screen shake: the camera renders at cameraBase + a random offset scaled by
+  // trauma², so a hit jolts the frame without fighting the attract-mode orbit.
+  private cameraBase = new THREE.Vector3(0, 5.5, 17);
+  private trauma = 0;
+  private cue = new THREE.Group();
+  private cueInner: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+  private cueOuter: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+  private cuePop: { t: number } | null = null;
+  private trail: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>[] = [];
+  private trailHist: Vec3[] = []; // newest first
+  private trailPower = 0;
+  private bursts: Burst[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -125,6 +150,44 @@ export class Scene {
     this.arm.visible = false;
     this.scene.add(this.arm);
 
+    // Timing reticle: two flat rings facing the camera at the contact point.
+    // The outer ring shrinks onto the inner one as the ball arrives; both sit
+    // on top of everything (depthTest off) since the avatar stands in front.
+    const cueMat = (opacity: number) =>
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity,
+        depthTest: false,
+        depthWrite: false,
+      });
+    this.cueInner = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.24, 40), cueMat(0.9));
+    this.cueOuter = new THREE.Mesh(new THREE.RingGeometry(0.93, 1.0, 48), cueMat(0.35));
+    this.cueInner.renderOrder = 10;
+    this.cueOuter.renderOrder = 10;
+    this.cue.add(this.cueInner, this.cueOuter);
+    this.cue.visible = false;
+    this.scene.add(this.cue);
+
+    // Ball trail: a fading tail of spheres replaying the last few positions —
+    // the cheapest way to make a small fast ball readable.
+    const trailGeo = new THREE.SphereGeometry(0.11, 10, 10);
+    for (let i = 0; i < TRAIL_N; i++) {
+      const m = new THREE.Mesh(
+        trailGeo,
+        new THREE.MeshBasicMaterial({
+          color: TRAIL_COOL.clone(),
+          transparent: true,
+          opacity: 0.35 * (1 - i / TRAIL_N),
+          depthWrite: false,
+        }),
+      );
+      m.scale.setScalar((1 - i / TRAIL_N) * 0.9);
+      m.visible = false;
+      this.trail.push(m);
+      this.scene.add(m);
+    }
+
     this.resize();
     window.addEventListener('resize', () => this.resize());
   }
@@ -169,15 +232,151 @@ export class Scene {
 
   /**
    * Attract-mode camera: pass a time to orbit slowly around the court behind
-   * the home screen, or null to restore the gameplay framing exactly.
+   * the home screen, or null to restore the gameplay framing exactly. Writes
+   * the shake-free base position — render() adds the trauma offset on top so
+   * the two compose.
    */
   setAttractCamera(t: number | null): void {
     if (t === null) {
-      this.camera.position.set(0, 5.5, 17);
+      this.cameraBase.set(0, 5.5, 17);
     } else {
-      this.camera.position.set(Math.sin(t * 0.15) * 6, 6.5, Math.cos(t * 0.15) * 17);
+      this.cameraBase.set(Math.sin(t * 0.15) * 6, 6.5, Math.cos(t * 0.15) * 17);
     }
-    this.camera.lookAt(0, 0, -2);
+  }
+
+  /**
+   * Timing reticle at the incoming ball's contact point. The outer ring
+   * shrinks from wide-open to the inner ring's size as `closeness` goes 0 → 1,
+   * turning green inside the hit window and red once it has passed.
+   */
+  setTimingCue(cue: { pos: Vec3; closeness: number; phase: CuePhase } | null): void {
+    if (!cue) {
+      if (!this.cuePop) this.cue.visible = false; // let a contact pop finish
+      return;
+    }
+    this.cuePop = null; // a fresh cue cancels any running pop
+    this.cue.visible = true;
+    this.cue.scale.setScalar(1);
+    this.cue.position.set(cue.pos.x, cue.pos.y, cue.pos.z);
+    this.cueOuter.scale.setScalar(1 - 0.78 * cue.closeness);
+    const inner = this.cueInner.material;
+    const outer = this.cueOuter.material;
+    if (cue.phase === 'window') {
+      inner.color.set(0x5ce65c);
+      outer.color.set(0x5ce65c);
+      inner.opacity = 0.95;
+      outer.opacity = 0.95;
+    } else if (cue.phase === 'late') {
+      inner.color.set(0xff5a5a);
+      outer.color.set(0xff5a5a);
+      inner.opacity = 0.8;
+      outer.opacity = 0.8;
+    } else {
+      inner.color.set(0xffffff);
+      outer.color.set(0xffffff);
+      inner.opacity = 0.9;
+      outer.opacity = 0.35 + 0.4 * cue.closeness;
+    }
+  }
+
+  /** Contact celebration: the reticle pops outward and fades, gold on a perfect. */
+  popTimingCue(perfect: boolean): void {
+    this.cuePop = { t: 0 };
+    this.cue.visible = true;
+    this.cue.scale.setScalar(1);
+    const color = perfect ? 0xffd23f : 0x5ce65c;
+    this.cueInner.material.color.set(color);
+    this.cueOuter.material.color.set(color);
+    this.cueInner.material.opacity = 0.95;
+    this.cueOuter.material.opacity = 0.95;
+  }
+
+  /** Trail color: cool ball-yellow at rest, hot orange after a hard hit. */
+  setTrailHot(power: number): void {
+    this.trailPower = Math.min(1, Math.max(0, power));
+    const color = TRAIL_COOL.clone().lerp(TRAIL_HOT, this.trailPower);
+    for (const m of this.trail) m.material.color.copy(color);
+  }
+
+  /** Spawn a short-lived particle burst — impact juice for hits and bounces. */
+  burst(pos: Vec3, power: number, color = 0xffffff): void {
+    const p = Math.min(1, Math.max(0, power));
+    const count = Math.round(8 + 22 * p);
+    const positions = new Float32Array(count * 3);
+    const vel = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = pos.x;
+      positions[i * 3 + 1] = pos.y;
+      positions[i * 3 + 2] = pos.z;
+      // random direction in the upward hemisphere-ish, scaled by hit power
+      const theta = Math.random() * Math.PI * 2;
+      const vy = Math.random();
+      const rh = Math.sqrt(Math.max(0, 1 - vy * vy));
+      const speed = (2 + 3 * Math.random()) * (0.6 + p);
+      vel[i * 3] = Math.cos(theta) * rh * speed;
+      vel[i * 3 + 1] = vy * speed;
+      vel[i * 3 + 2] = Math.sin(theta) * rh * speed;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color,
+      size: 0.07,
+      sizeAttenuation: true,
+      transparent: true,
+      depthWrite: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    this.scene.add(points);
+    this.bursts.push({ points, vel, life: BURST_LIFE_S });
+  }
+
+  /** Add screen shake; bigger hits keep the bigger of the two traumas. */
+  shake(amount: number): void {
+    this.trauma = Math.max(this.trauma, Math.min(1, Math.max(0, amount)));
+  }
+
+  /**
+   * Advance real-time effects: reticle pop, particle bursts, shake decay.
+   * Driven with the unclamped frame dt so juice keeps playing during hit-stop.
+   */
+  update(dt: number): void {
+    if (this.cuePop) {
+      this.cuePop.t += dt;
+      const k = Math.min(1, this.cuePop.t / CUE_POP_S);
+      this.cue.scale.setScalar(1 + 0.6 * k);
+      const o = 0.95 * (1 - k);
+      this.cueInner.material.opacity = o;
+      this.cueOuter.material.opacity = o;
+      if (k >= 1) {
+        this.cuePop = null;
+        this.cue.visible = false;
+        this.cue.scale.setScalar(1);
+      }
+    }
+    this.trauma = Math.max(0, this.trauma - 2.5 * dt);
+    const live: Burst[] = [];
+    for (const b of this.bursts) {
+      b.life -= dt;
+      if (b.life <= 0) {
+        this.scene.remove(b.points);
+        b.points.geometry.dispose();
+        b.points.material.dispose();
+        continue;
+      }
+      const attr = b.points.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const arr = attr.array as Float32Array;
+      for (let i = 0; i < attr.count; i++) {
+        b.vel[i * 3 + 1] += -9.8 * dt;
+        arr[i * 3] += b.vel[i * 3] * dt;
+        arr[i * 3 + 1] += b.vel[i * 3 + 1] * dt;
+        arr[i * 3 + 2] += b.vel[i * 3 + 2] * dt;
+      }
+      attr.needsUpdate = true;
+      b.points.material.opacity = b.life / BURST_LIFE_S;
+      live.push(b);
+    }
+    this.bursts = live;
   }
 
   setBall(pos: Vec3): void {
@@ -187,8 +386,24 @@ export class Scene {
     this.ballShadow.position.set(pos.x, SHADOW_Y, pos.z);
     this.ballShadow.scale.setScalar(0.5 + 0.5 * k);
     this.ballShadow.material.opacity = SHADOW_MAX_OPACITY * k;
+
+    this.trailHist.unshift({ ...pos });
+    if (this.trailHist.length > TRAIL_N) this.trailHist.pop();
+    for (let i = 0; i < TRAIL_N; i++) {
+      const m = this.trail[i];
+      const p = this.trailHist[i];
+      m.visible = !!p;
+      if (p) m.position.set(p.x, p.y, p.z);
+    }
   }
-  setBallVisible(v: boolean): void { this.ball.visible = v; this.ballShadow.visible = v; }
+  setBallVisible(v: boolean): void {
+    this.ball.visible = v;
+    this.ballShadow.visible = v;
+    if (!v) {
+      this.trailHist = [];
+      for (const m of this.trail) m.visible = false;
+    }
+  }
   setPlayerX(x: number): void { this.player.position.x = x; }
   setCpuX(x: number): void { this.cpu.position.x = x; }
 
@@ -199,5 +414,14 @@ export class Scene {
     this.camera.updateProjectionMatrix();
   }
 
-  render(): void { this.renderer.render(this.scene, this.camera); }
+  render(): void {
+    this.camera.position.copy(this.cameraBase);
+    if (this.trauma > 0) {
+      const s = this.trauma * this.trauma * 0.25;
+      this.camera.position.x += s * (Math.random() * 2 - 1);
+      this.camera.position.y += s * (Math.random() * 2 - 1);
+    }
+    this.camera.lookAt(0, 0, -2);
+    this.renderer.render(this.scene, this.camera);
+  }
 }
