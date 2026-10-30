@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import type { Vec3 } from '../types';
 import type { CuePhase } from '../game/timing';
+import { buildWorld, type Crowd } from './world';
+import { createAvatar } from './avatar';
+import { fitCamera } from './framing';
 
-const COURT_HALF_W = 4.11;
-const COURT_HALF_L = 11.9;
 // Blob shadow under the ball: a depth cue for the player's camera without
 // paying for shadow maps. It shrinks and fades as the ball climbs.
 const SHADOW_Y = 0.025; // just above the court lines (0.02) to avoid z-fighting
@@ -29,8 +30,11 @@ export class Scene {
   private camera: THREE.PerspectiveCamera;
   private ball: THREE.Mesh;
   private ballShadow: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
-  private player: THREE.Mesh;
-  private cpu: THREE.Mesh;
+  private player: THREE.Group;
+  private cpu: THREE.Group;
+  private cpuPivot: THREE.Group | null = null;
+  private cpuSwingT: number | null = null; // seconds into the CPU's swing, null = at rest
+  private crowd: Crowd;
   private upperArm: THREE.Mesh;
   private forearm: THREE.Mesh;
   private racketHandle: THREE.Mesh;
@@ -39,6 +43,7 @@ export class Scene {
   // Screen shake: the camera renders at cameraBase + a random offset scaled by
   // trauma², so a hit jolts the frame without fighting the attract-mode orbit.
   private cameraBase = new THREE.Vector3(0, 5.5, 17);
+  private playBase = new THREE.Vector3(0, 5.5, 17); // gameplay framing from fitCamera
   private trauma = 0;
   private cue = new THREE.Group();
   private cueInner: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
@@ -51,51 +56,17 @@ export class Scene {
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
+    // Cap pixel ratio: retina-class displays would otherwise render at 2×
+    // (4× the fragment work) for a barely visible difference.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
     this.camera.position.set(0, 5.5, 17);
     this.camera.lookAt(0, 0, -2);
 
-    this.scene.background = new THREE.Color(0x1a2a4a);
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-    sun.position.set(5, 12, 8);
-    this.scene.add(sun);
-
-    // court surface + surround
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(40, 60),
-      new THREE.MeshLambertMaterial({ color: 0x2e6b3a }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    this.scene.add(ground);
-    const court = new THREE.Mesh(
-      new THREE.PlaneGeometry(COURT_HALF_W * 2, COURT_HALF_L * 2),
-      new THREE.MeshLambertMaterial({ color: 0x3b7dd8 }),
-    );
-    court.rotation.x = -Math.PI / 2;
-    court.position.y = 0.01;
-    this.scene.add(court);
-
-    // court lines (white strips)
-    const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const line = (w: number, l: number, x: number, z: number) => {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, l), lineMat);
-      m.rotation.x = -Math.PI / 2;
-      m.position.set(x, 0.02, z);
-      this.scene.add(m);
-    };
-    line(0.08, COURT_HALF_L * 2, -COURT_HALF_W, 0); // sidelines
-    line(0.08, COURT_HALF_L * 2, COURT_HALF_W, 0);
-    line(COURT_HALF_W * 2, 0.08, 0, -COURT_HALF_L); // baselines
-    line(COURT_HALF_W * 2, 0.08, 0, COURT_HALF_L);
-
-    // net
-    const net = new THREE.Mesh(
-      new THREE.BoxGeometry(COURT_HALF_W * 2 + 0.8, 0.9, 0.05),
-      new THREE.MeshLambertMaterial({ color: 0xdddddd, transparent: true, opacity: 0.75 }),
-    );
-    net.position.set(0, 0.45, 0);
-    this.scene.add(net);
+    // sky, lighting, grass, court, lines, net, stands + crowd — all procedural
+    this.crowd = buildWorld(this.scene).crowd;
 
     // ball + avatars
     this.ball = new THREE.Mesh(
@@ -113,15 +84,17 @@ export class Scene {
     this.ballShadow.position.y = SHADOW_Y;
     this.scene.add(this.ballShadow);
 
-    const avatar = (color: number) =>
-      new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.3, 1.0, 4, 12),
-        new THREE.MeshLambertMaterial({ color }),
-      );
-    this.player = avatar(0xe05555);
-    this.player.position.set(0, 0.8, 11);
-    this.cpu = avatar(0x5566e0);
-    this.cpu.position.set(0, 0.8, -11);
+    this.player = createAvatar({ shirt: 0xe05555, skin: 0xf0c9a0, hair: 0x3a2a1a, facing: -1 });
+    this.player.position.set(0, 0, 11);
+    this.cpu = createAvatar({
+      shirt: 0x5566e0,
+      skin: 0xc98d5e,
+      hair: 0x1c1c22,
+      facing: 1,
+      racket: true,
+    });
+    this.cpu.position.set(0, 0, -11);
+    this.cpuPivot = this.cpu.userData.swingPivot ?? null;
     this.scene.add(this.player, this.cpu);
 
     // Playing arm and racket, driven by the player's tracked pose. Each segment
@@ -238,9 +211,13 @@ export class Scene {
    */
   setAttractCamera(t: number | null): void {
     if (t === null) {
-      this.cameraBase.set(0, 5.5, 17);
+      this.cameraBase.copy(this.playBase);
     } else {
-      this.cameraBase.set(Math.sin(t * 0.15) * 6, 6.5, Math.cos(t * 0.15) * 17);
+      // orbit radius/height scale with the fitted play position so the same
+      // cinematic works in portrait
+      const k = (this.playBase.z + 2) / 19;
+      const h = this.playBase.y / 5.5;
+      this.cameraBase.set(Math.sin(t * 0.15) * 6 * k, 6.5 * h, Math.cos(t * 0.15) * 17 * k);
     }
   }
 
@@ -336,6 +313,16 @@ export class Scene {
     this.trauma = Math.max(this.trauma, Math.min(1, Math.max(0, amount)));
   }
 
+  /** Crowd celebration — bigger intensity for points the player won. */
+  cheer(intensity: number): void {
+    this.crowd.cheer(intensity);
+  }
+
+  /** Trigger the CPU's racket swing (call when it strikes the ball). */
+  cpuSwing(): void {
+    if (this.cpuPivot) this.cpuSwingT = 0;
+  }
+
   /**
    * Advance real-time effects: reticle pop, particle bursts, shake decay.
    * Driven with the unclamped frame dt so juice keeps playing during hit-stop.
@@ -355,6 +342,22 @@ export class Scene {
       }
     }
     this.trauma = Math.max(0, this.trauma - 2.5 * dt);
+    this.crowd.update(dt);
+    if (this.cpuSwingT !== null && this.cpuPivot) {
+      // 0.3 s swing: sweep the pivot −120° → +60° (ease-out) then back to rest
+      this.cpuSwingT += dt;
+      const k = this.cpuSwingT / 0.3;
+      if (k >= 1) {
+        this.cpuPivot.rotation.y = 0;
+        this.cpuSwingT = null;
+      } else {
+        const a =
+          k < 0.6
+            ? -120 + 180 * (1 - Math.pow(1 - k / 0.6, 2))
+            : 60 * (1 - (k - 0.6) / 0.4);
+        this.cpuPivot.rotation.y = (a * Math.PI) / 180;
+      }
+    }
     const live: Burst[] = [];
     for (const b of this.bursts) {
       b.life -= dt;
@@ -410,8 +413,14 @@ export class Scene {
   resize(): void {
     const w = window.innerWidth, h = window.innerHeight;
     this.renderer.setSize(w, h);
+    // Portrait phones get a wider FOV and a pulled-back camera so the court
+    // still fits; desktop keeps the classic framing.
+    const f = fitCamera(w / h);
+    this.camera.fov = f.fov;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.playBase.set(f.pos.x, f.pos.y, f.pos.z);
+    this.cameraBase.copy(this.playBase);
   }
 
   render(): void {

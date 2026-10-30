@@ -210,6 +210,7 @@ async function main() {
   function awardPoint(w: Winner) {
     match.pointTo(w);
     sfx.point(w === 'player');
+    scene.cheer(w === 'player' ? 1 : 0.35);
   }
 
   function beginServe(t: number) {
@@ -513,6 +514,7 @@ async function main() {
           if (ret) {
             cpuX = ball.pos.x; // CPU moved to the ball to strike it
             sfx.hit(0.5);
+            scene.cpuSwing();
             scene.burst(ball.pos, 0.3, 0xaabbff);
             scene.setTrailHot(0);
             launch({ x: ball.pos.x, y: Math.max(ball.pos.y, 0.8), z: ball.pos.z }, ret, now);
@@ -576,6 +578,7 @@ async function main() {
           );
         } else if (demo.vel.z < 0 && demo.pos.z <= CPU_Z + 1.2) {
           // the demo "CPU" returns it toward the player
+          scene.cpuSwing();
           scene.burst(demo.pos, 0.3, 0xffffff);
           demo = launchBall(
             { x: demo.pos.x, y: Math.max(demo.pos.y, 0.8), z: demo.pos.z },
