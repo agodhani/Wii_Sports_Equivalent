@@ -22,38 +22,34 @@ test('pointer mode: match starts, swings register, misses score for CPU', async 
 
   // swing at up to 3 balls — at least one must be accepted
   let hits = 0;
-  let consecutive = 0;
   let prev: number | null = null;
-  let sawMissOrCpuPoint = false;
-  let cpuBefore = 0;
   const attempts: string[] = [];
   for (let i = 0; i < 3; i++) {
-    const cpuScore = (await state(page)).cpuScore;
     const { flash, ideal, timing } = await swingAtNextBall(page, prev, i % 2 === 0 ? 1 : -1);
     attempts.push(`${flash} ${JSON.stringify(timing)} ${await hudFps(page)}`);
     prev = ideal;
-    if (flash && HIT_FLASHES.includes(flash)) {
-      hits++;
-      consecutive++;
-      if (consecutive === 1) {
-        // the how-to hint disappears after the first accepted swing
-        expect(await isShown(page, '#hint')).toBe(false);
-      }
-      if (consecutive >= 2) {
-        await expect(page.locator('#rally')).toHaveText(`Rally ${consecutive}`);
-      }
-    } else {
-      consecutive = 0;
-      if (flash === 'Miss!' || (await state(page)).cpuScore > cpuScore) {
-        sawMissOrCpuPoint = true;
-      }
-      cpuBefore = (await state(page)).cpuScore;
-    }
+    if (!flash || !HIT_FLASHES.includes(flash)) continue;
+    hits++;
+    // the how-to hint disappears after the first accepted swing
+    if (hits === 1) expect(await isShown(page, '#hint')).toBe(false);
+    // The rally counter must match the game's rally. Consecutive hits aren't
+    // necessarily one rally: if the CPU misses a return, the point ends and
+    // the next hit starts a new rally at 1. Read display and state in one go
+    // (contact can land a frame after the swing on slow machines) and retry
+    // until they agree.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const rally = (window as unknown as { __wt: { state(): { rally: number } } }).__wt.state().rally;
+          const el = document.querySelector('#rally') as HTMLElement;
+          const shown = getComputedStyle(el).display !== 'none' ? el.textContent : null;
+          return shown === (rally >= 2 ? `Rally ${rally}` : null);
+        }),
+      )
+      .toBe(true);
   }
   expect(hits, `at least one flick should register as a hit; attempts: ${attempts.join(' | ')}`)
     .toBeGreaterThanOrEqual(1);
-  void cpuBefore;
-  void sawMissOrCpuPoint;
 });
 
 test('idle ball flashes Miss! and scores for the CPU', async ({ page }) => {

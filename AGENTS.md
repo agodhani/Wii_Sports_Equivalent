@@ -12,10 +12,12 @@
   e2e runs with 1 worker on purpose (software WebGL + timing-sensitive swings).
 - `window.__wt` is a DEV-only, read-only play-test hook (stripped from prod builds). Swings in tests go
   through the game's real `pointermove` listener and swing detector (`swingAtNextBall` in `e2e/helpers.ts`);
-  the flick is timed inside the page because per-step `page.mouse.move` round trips are too slow on CI.
+  the flick is timed inside the page (busy-wait for the last 0.4 s) because GitHub runners render the game
+  in software at ~9 fps, where `page.mouse.move` round trips and page timers are both ~100 ms late.
   Never shortcut game state (forced scores, injected SwingEvents).
 - CI: `.github/workflows/ci.yml` runs build → unit → e2e on every push/PR to GitHub. Failures show up as
-  annotations on the run. `E2E_CPU_THROTTLE=4 npm run test:e2e` approximates a slow machine locally.
+  annotations on the run. CI renders at ~9 fps; reproduce that locally with
+  `E2E_FRAME_LOAD_MS=160 npm run test:e2e` (~6 fps) before pushing timing-sensitive test changes.
 - Input modes: `camera` (MediaPipe pose → `src/swing/detector.ts`) and `pointer` (mouse/touch swipe →
   `src/input/pointer.ts`). Home screen shows at load over an attract-mode demo rally; camera + pose model
   load only when "Play with Camera" is clicked (model is prefetched in the background).

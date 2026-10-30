@@ -57,12 +57,20 @@ export async function openGame(page: Page, query = ''): Promise<void> {
     }
     delete (Navigator.prototype as Navigator & { share?: unknown }).share;
   });
-  // E2E_CPU_THROTTLE=4 slows the page's CPU like a shared CI runner, to
-  // reproduce/guard against timing problems that only show up on slow machines.
-  const throttle = Number(process.env.E2E_CPU_THROTTLE ?? 0);
-  if (throttle > 1) {
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });
+  // E2E_FRAME_LOAD_MS=100 burns that much main-thread time every frame (~9 fps),
+  // reproducing GitHub runners, where software WebGL makes every frame slow
+  // and every timer fire late. CPU throttling alone can't: rendering happens
+  // in the unthrottled GPU process.
+  const frameLoad = Number(process.env.E2E_FRAME_LOAD_MS ?? 0);
+  if (frameLoad > 0) {
+    await page.addInitScript((ms) => {
+      const burn = () => {
+        const end = performance.now() + ms;
+        while (performance.now() < end) { /* simulated slow frame */ }
+        requestAnimationFrame(burn);
+      };
+      requestAnimationFrame(burn);
+    }, frameLoad);
   }
   await page.goto(`${BASE}/${query}`);
   await page.waitForSelector('#home', { state: 'visible' });
@@ -123,23 +131,37 @@ export async function swingAtNextBall(
   // A 0.36-viewport flick over 80 ms (~4.5 widths/s, well past the 1.2
   // trigger) starting 60 ms before ideal: the detector trips ~30 ms in, which
   // lands inside the ±50 ms Perfect band.
+  //
+  // Frame-rate independent: on CI the software-rendered game runs at ~9 fps,
+  // so timers fire a whole ~110 ms frame late. Sleep only until SPIN_S before
+  // the flick, then busy-wait and dispatch synchronously so no frame can run
+  // in between. The game judges swings by event timestamp, and it consumes
+  // the swing before checking contact in its next frame, so briefly blocking
+  // the main thread doesn't change the outcome.
   const timing = await page.evaluate(
     async ({ ideal, dir }) => {
       const LEAD_S = 0.06;
       const DUR_S = 0.08;
-      const sleep = () => new Promise((r) => setTimeout(r, 4));
-      while (performance.now() / 1000 < ideal - LEAD_S) await sleep();
+      const SPIN_S = 0.4;
+      const nowS = () => performance.now() / 1000;
+      const start = ideal - LEAD_S;
+      while (nowS() < start - SPIN_S) await new Promise((r) => setTimeout(r, 4));
+      while (nowS() < start) { /* spin: a frame here would make the flick late */ }
       const t0 = performance.now();
       let events = 0;
+      let lastDispatch = -Infinity;
       for (;;) {
-        const k = Math.min(1, (performance.now() - t0) / 1000 / DUR_S);
-        const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
-        window.dispatchEvent(
-          new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: innerHeight / 2 }),
-        );
-        events++;
+        const now = performance.now();
+        const k = Math.min(1, (now - t0) / 1000 / DUR_S);
+        if (now - lastDispatch >= 8 || k >= 1) {
+          const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
+          window.dispatchEvent(
+            new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: innerHeight / 2 }),
+          );
+          events++;
+          lastDispatch = now;
+        }
         if (k >= 1) break;
-        await sleep();
       }
       return {
         startOffsetMs: Math.round(t0 - ideal * 1000),
