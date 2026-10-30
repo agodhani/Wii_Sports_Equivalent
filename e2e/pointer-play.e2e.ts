@@ -1,4 +1,4 @@
-import { test, expect, openGame, state, waitForPhase, swingAtNextBall, isShown } from './helpers';
+import { test, expect, openGame, state, waitForPhase, swingAtNextBall, isShown, hudFps } from './helpers';
 
 const HIT_FLASHES = ['Perfect!', 'Early!', 'Late!'];
 
@@ -26,9 +26,11 @@ test('pointer mode: match starts, swings register, misses score for CPU', async 
   let prev: number | null = null;
   let sawMissOrCpuPoint = false;
   let cpuBefore = 0;
+  const attempts: string[] = [];
   for (let i = 0; i < 3; i++) {
     const cpuScore = (await state(page)).cpuScore;
-    const { flash, ideal } = await swingAtNextBall(page, prev, i % 2 === 0 ? 1 : -1);
+    const { flash, ideal, timing } = await swingAtNextBall(page, prev, i % 2 === 0 ? 1 : -1);
+    attempts.push(`${flash} ${JSON.stringify(timing)} ${await hudFps(page)}`);
     prev = ideal;
     if (flash && HIT_FLASHES.includes(flash)) {
       hits++;
@@ -48,7 +50,8 @@ test('pointer mode: match starts, swings register, misses score for CPU', async 
       cpuBefore = (await state(page)).cpuScore;
     }
   }
-  expect(hits, 'at least one flick should register as a hit').toBeGreaterThanOrEqual(1);
+  expect(hits, `at least one flick should register as a hit; attempts: ${attempts.join(' | ')}`)
+    .toBeGreaterThanOrEqual(1);
   void cpuBefore;
   void sawMissOrCpuPoint;
 });

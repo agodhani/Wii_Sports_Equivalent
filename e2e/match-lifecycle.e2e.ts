@@ -1,4 +1,4 @@
-import { test, expect, openGame, state, waitForPhase, swingAtNextBall, loseMatch, isShown, RECORDS_KEY } from './helpers';
+import { test, expect, openGame, state, waitForPhase, swingAtNextBall, loseMatch, isShown, hudFps, RECORDS_KEY } from './helpers';
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 
@@ -12,12 +12,14 @@ test('match end → report → share → rematch → records survive reload', as
   // land at least one real hit so the report has non-zero stats
   let hits = 0;
   let prev: number | null = null;
+  const attempts: string[] = [];
   for (let i = 0; i < 4 && hits === 0; i++) {
-    const { flash, ideal } = await swingAtNextBall(page, prev);
+    const { flash, ideal, timing } = await swingAtNextBall(page, prev);
+    attempts.push(`${flash} ${JSON.stringify(timing)} ${await hudFps(page)}`);
     prev = ideal;
     if (flash && HIT_FLASHES.includes(flash)) hits++;
   }
-  expect(hits).toBeGreaterThanOrEqual(1);
+  expect(hits, `attempts: ${attempts.join(' | ')}`).toBeGreaterThanOrEqual(1);
 
   await loseMatch(page);
   await expect(page.locator('#report')).toBeVisible();

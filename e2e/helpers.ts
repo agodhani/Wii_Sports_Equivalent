@@ -57,6 +57,13 @@ export async function openGame(page: Page, query = ''): Promise<void> {
     }
     delete (Navigator.prototype as Navigator & { share?: unknown }).share;
   });
+  // E2E_CPU_THROTTLE=4 slows the page's CPU like a shared CI runner, to
+  // reproduce/guard against timing problems that only show up on slow machines.
+  const throttle = Number(process.env.E2E_CPU_THROTTLE ?? 0);
+  if (throttle > 1) {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });
+  }
   await page.goto(`${BASE}/${query}`);
   await page.waitForSelector('#home', { state: 'visible' });
 }
@@ -72,17 +79,30 @@ export async function waitForPhase(page: Page, phase: string, timeout = 90_000):
   );
 }
 
+export interface FlickTiming {
+  startOffsetMs: number; // flick start relative to ideal contact (negative = before)
+  durationMs: number;
+  events: number;
+}
+
 /**
- * Wait for a fresh ball incoming to the player, then flick the mouse
- * horizontally so the pointer-swing detector fires ~at idealContactTime.
- * Returns the flash text shown right after (null if the ball never came).
- * Pass the previous returned `ideal` to keep swinging at successive balls.
+ * Wait for a fresh ball incoming to the player, then flick horizontally so the
+ * pointer-swing detector fires ~at idealContactTime. Returns the flash text
+ * shown right after (null if the ball never came) plus the flick's measured
+ * timing for failure messages. Pass the previous returned `ideal` to keep
+ * swinging at successive balls.
+ *
+ * The flick runs inside the page, positioned by the page's own clock and
+ * dispatched to the game's real pointermove listener. Driving it with
+ * page.mouse.move instead costs a runner↔browser round trip per step, which
+ * on a slow CI machine stretches the flick until it's too slow to count as a
+ * swing at all.
  */
 export async function swingAtNextBall(
   page: Page,
   prevIdeal: number | null = null,
   dir = 1,
-): Promise<{ flash: string | null; ideal: number | null }> {
+): Promise<{ flash: string | null; ideal: number | null; timing: FlickTiming | null }> {
   let ideal: number | null = null;
   const t0 = Date.now();
   while (Date.now() - t0 < 15_000) {
@@ -98,25 +118,45 @@ export async function swingAtNextBall(
     }
     await page.waitForTimeout(12);
   }
-  if (ideal === null) return { flash: null, ideal: null };
+  if (ideal === null) return { flash: null, ideal: null, timing: null };
 
-  // The detector needs ~60-80 ms of fast motion to trigger, so start the
-  // flick ~80 ms before ideal contact — the trigger lands inside the window.
-  for (;;) {
-    const s = await state(page);
-    if (s.idealContactTime !== ideal || s.now >= ideal - 0.08) break;
-    await page.waitForTimeout(5);
-  }
-  const vw = page.viewportSize()?.width ?? 1280;
-  const [x0, x1] = dir > 0 ? [0.32 * vw, 0.68 * vw] : [0.68 * vw, 0.32 * vw];
-  for (let i = 1; i <= 10; i++) {
-    await page.mouse.move(x0 + ((x1 - x0) * i) / 10, 400);
-    await page.waitForTimeout(5);
-  }
+  // A 0.36-viewport flick over 80 ms (~4.5 widths/s, well past the 1.2
+  // trigger) starting 60 ms before ideal: the detector trips ~30 ms in, which
+  // lands inside the ±50 ms Perfect band.
+  const timing = await page.evaluate(
+    async ({ ideal, dir }) => {
+      const LEAD_S = 0.06;
+      const DUR_S = 0.08;
+      const sleep = () => new Promise((r) => setTimeout(r, 4));
+      while (performance.now() / 1000 < ideal - LEAD_S) await sleep();
+      const t0 = performance.now();
+      let events = 0;
+      for (;;) {
+        const k = Math.min(1, (performance.now() - t0) / 1000 / DUR_S);
+        const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
+        window.dispatchEvent(
+          new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: innerHeight / 2 }),
+        );
+        events++;
+        if (k >= 1) break;
+        await sleep();
+      }
+      return {
+        startOffsetMs: Math.round(t0 - ideal * 1000),
+        durationMs: Math.round(performance.now() - t0),
+        events,
+      };
+    },
+    { ideal, dir },
+  );
   await page.waitForTimeout(400);
   const flash = await page.$eval('#flash', (e) => e.textContent).catch(() => null);
-  return { flash, ideal };
+  return { flash, ideal, timing };
 }
+
+/** Smoothed fps from the HUD counter, for failure diagnostics. */
+export const hudFps = (page: Page): Promise<string | null> =>
+  page.$eval('#fps', (e) => e.textContent).catch(() => null);
 
 /** Stop interacting entirely and wait for the CPU to win on unanswered serves. */
 export async function loseMatch(page: Page, timeout = 90_000): Promise<void> {
