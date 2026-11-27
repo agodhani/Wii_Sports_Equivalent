@@ -114,11 +114,14 @@ export class SwingDetector {
         f.rightShoulder.x - f.leftShoulder.x,
         (f.rightShoulder.y - f.leftShoulder.y) / f.aspectRatio,
       );
+      const wristRise = oldest.wrist.y - wrist.y;
+      const relativeRise = oldest.wristYFromShoulders - now.wristYFromShoulders;
+      const rise = Math.max(Math.min(0, wristRise), Math.min(Math.max(0, wristRise), relativeRise));
       return {
         side,
         shotType: classifyShot(
           Math.abs(wrist.x - oldest.wrist.x) / pathScale,
-          (oldest.wristYFromShoulders - now.wristYFromShoulders) / f.aspectRatio / pathScale,
+          rise / f.aspectRatio / pathScale,
           MIN_RISE,
         ),
         speed: wristSpeed,

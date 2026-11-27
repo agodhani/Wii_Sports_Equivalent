@@ -168,6 +168,18 @@ describe('SwingDetector', () => {
     expect(event?.shotType).toBe('flat');
   });
 
+  it('does not turn a level wrist path into slice when one shoulder rises', () => {
+    const d = new SwingDetector('right');
+    d.update(frameOf(0, { x: 0.8, y: 0.6 }, 'right'));
+    const event = d.update({
+      ...frameOf(0.08, { x: 0.68, y: 0.6 }, 'right'),
+      leftShoulder: { x: 0.4, y: 0.4 },
+      rightShoulder: { x: 0.55, y: 0.25 },
+      shoulderWidth: Math.hypot(0.15, 0.15),
+    });
+    expect(event?.shotType).toBe('flat');
+  });
+
   it('left-handed player fires forehand when left wrist starts left of the midpoint', () => {
     const d = new SwingDetector('left');
     const events = sweep(d, 0.2, 0.5, 0.2, 0, 'left');
