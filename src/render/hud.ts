@@ -284,7 +284,9 @@ export class Hud {
         link.select();
       }
     };
-    (this.root.querySelector('#online-camera') as HTMLButtonElement).onclick = controls.camera;
+    const camera = this.root.querySelector('#online-camera') as HTMLButtonElement;
+    camera.disabled = false;
+    camera.onclick = controls.camera;
     (this.root.querySelector('#online-pointer') as HTMLButtonElement).onclick = controls.pointer;
     (this.root.querySelector('#online-back') as HTMLButtonElement).onclick = controls.leave;
     (this.root.querySelector('#online-leave') as HTMLButtonElement).onclick = controls.leave;
@@ -302,6 +304,7 @@ export class Hud {
   showWaitingOnlineLobby(): void {
     (this.root.querySelector('#online-lobby') as HTMLElement).style.display = 'grid';
     (this.root.querySelector('#online-leave') as HTMLButtonElement).style.display = 'none';
+    (this.root.querySelector('#online-camera') as HTMLButtonElement).disabled = true;
   }
 
   closeOnlineLobby(): void {
