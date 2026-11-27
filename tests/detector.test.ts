@@ -32,6 +32,7 @@ function frameOf(t: number, wrist: Vec2, side: 'left' | 'right', o: BodyOpts = {
     leftHip: { x: 0.42, y: 0.7 },
     rightHip: { x: 0.58, y: 0.7 },
     shoulderWidth: Math.hypot(leftShoulder.x - rightShoulder.x, leftShoulder.y - rightShoulder.y),
+    aspectRatio: 1,
     trackingLost: lost,
   };
 }
@@ -143,6 +144,16 @@ describe('SwingDetector', () => {
       if (event) events.push(event);
     }
     expect(events).toMatchObject([{ shotType: 'flat' }]);
+  });
+
+  it('classifies a wide-frame diagonal by its pixel slope', () => {
+    const d = new SwingDetector('right');
+    d.update({ ...frameOf(0, { x: 0.8, y: 0.65 }, 'right'), aspectRatio: 16 / 9 });
+    const event = d.update({
+      ...frameOf(0.08, { x: 0.58, y: 0.39 }, 'right'),
+      aspectRatio: 16 / 9,
+    });
+    expect(event?.shotType).toBe('topspin');
   });
 
   it('left-handed player fires forehand when left wrist starts left of the midpoint', () => {

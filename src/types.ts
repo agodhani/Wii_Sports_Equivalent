@@ -18,6 +18,7 @@ export interface PoseFrame {
   leftHip: Vec2;
   rightHip: Vec2;
   shoulderWidth: number;     // |leftShoulder - rightShoulder|, for normalization
+  aspectRatio: number;       // video width / height
   trackingLost: boolean;
 }
 

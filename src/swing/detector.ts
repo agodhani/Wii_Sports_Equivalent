@@ -114,7 +114,7 @@ export class SwingDetector {
         side,
         shotType: classifyShot(
           horizontal * span,
-          oldest.relativeWristY - now.relativeWristY,
+          (oldest.relativeWristY - now.relativeWristY) / f.aspectRatio,
           MIN_RISE,
         ),
         speed: wristSpeed,
