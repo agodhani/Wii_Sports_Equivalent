@@ -66,12 +66,13 @@ test('idle ball flashes Miss! and scores for the CPU', async ({ page }) => {
   expect((await state(page)).cpuScore).toBe(cpuBefore + 1);
 });
 
-test('quick touch swipe counts from touchdown and connects after release', async ({ page }) => {
+test('quick touch swipe counts from primary touchdown and ignores a second finger', async ({ page }) => {
   await openGame(page);
   await page.click('#home-pointer');
 
-  const { contact, flash, timing } = await swingAtNextBall(page, null, 1, 0, true);
+  const { contact, flash, timing } = await swingAtNextBall(page, null, 1, -0.55, true);
   expect(contact, `Touch swipe did not connect: ${flash} ${JSON.stringify(timing)}`).toBe(true);
+  expect(flash, `Wrong touch shot: ${JSON.stringify(timing)}`).toMatch(/^Slice! · (Perfect|Early|Late)!$/);
 });
 
 for (const [label, slope, dir] of [['Topspin', 0.55, 1], ['Lob', 1.35, -1], ['Slice', -0.55, 1]] as const) {

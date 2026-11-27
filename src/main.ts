@@ -223,14 +223,14 @@ async function main() {
 
   for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) {
     window.addEventListener(type, (e) => {
-      if (inputMode !== 'pointer' || e.pointerType !== 'touch') return;
+      if (inputMode !== 'pointer' || e.pointerType !== 'touch' || !e.isPrimary) return;
       if (type === 'pointerdown') pointerDetector.beginContact(pointerSample(e));
       else pointerDetector.reset();
     });
   }
 
   window.addEventListener('pointermove', (e) => {
-    if (inputMode !== 'pointer') return;
+    if (inputMode !== 'pointer' || (e.pointerType === 'touch' && !e.isPrimary)) return;
     // Coalesced events recover the sub-frame motion Chrome batches per frame —
     // the difference between a 120 Hz and a 60 Hz swing measurement.
     const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];

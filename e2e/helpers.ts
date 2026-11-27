@@ -168,13 +168,15 @@ export async function swingAtNextBall(
       while (nowS() < start) { /* spin: a frame here would make the flick late */ }
       const t0 = performance.now();
       let events = 0;
-      const dispatch = (type: string, k: number, offset: number) => {
+      const dispatch = (type: string, k: number, offset: number, pointerId = 1) => {
         const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
         const y = innerHeight / 2 + upwardSlope * 0.36 * innerWidth * (0.5 - k);
         const event = new PointerEvent(type, {
           clientX: fx * innerWidth,
           clientY: y,
           pointerType: touch ? 'touch' : 'mouse',
+          pointerId,
+          isPrimary: pointerId === 1,
         });
         Object.defineProperty(event, 'timeStamp', { value: (start + offset) * 1000 });
         window.dispatchEvent(event);
@@ -182,9 +184,12 @@ export async function swingAtNextBall(
       };
       if (touch) {
         dispatch('pointerdown', 0, 0);
-        dispatch('pointermove', 0.5, 0.02);
-        dispatch('pointermove', 1, 0.04);
-        dispatch('pointerup', 1, 0.041);
+        dispatch('pointerdown', 1.4, 0.004, 2);
+        dispatch('pointermove', 1.4, 0.012, 2);
+        dispatch('pointermove', 0.5, 0.04);
+        dispatch('pointerup', 1.4, 0.043, 2);
+        dispatch('pointermove', 1, 0.055);
+        dispatch('pointerup', 1, 0.056);
       } else {
         let lastDispatch = -Infinity;
         for (;;) {
