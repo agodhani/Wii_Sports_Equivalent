@@ -30,6 +30,8 @@ import type {
 const PLAYER_Z = 11;
 const CPU_Z = -11;
 const COURT_HALF_W = 4.11;
+const SHOT_LABELS = { topspin: 'Topspin', lob: 'Lob', slice: 'Slice' };
+const SHOT_HINT = 'Sideways for flat · brush up for topspin · lift steeply for lob · swing down for slice';
 
 // Calibration: how vigorously the playing hand must wave to start the match.
 // Measured as average wrist speed in shoulder-widths/sec, so it is independent
@@ -139,6 +141,7 @@ async function main() {
   /** Leave the menu: stop the demo rally and put the camera back in play framing. */
   function leaveMenu() {
     demo = null;
+    hintCleared = false;
     playerX = 0;
     scene.setPlayerX(0);
     scene.setBallVisible(false);
@@ -207,24 +210,37 @@ async function main() {
     match.start();
     match.calibrated(); // pointer input needs no calibration
     beginServe(performance.now() / 1000);
-    hud.setHint('Swipe sideways across the screen as the ball reaches you');
+    hud.setHint(SHOT_HINT);
+  }
+
+  function pointerSample(e: PointerEvent) {
+    return {
+      t: e.timeStamp / 1000, // same clock as performance.now()
+      x: e.clientX / window.innerWidth,
+      y: e.clientY / window.innerWidth,
+    };
+  }
+
+  for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) {
+    window.addEventListener(type, (e) => {
+      if (inputMode !== 'pointer' || e.pointerType !== 'touch' || !e.isPrimary) return;
+      if (type === 'pointerdown') pointerDetector.beginContact(pointerSample(e));
+      else pointerDetector.reset();
+    });
   }
 
   window.addEventListener('pointermove', (e) => {
-    if (inputMode !== 'pointer') return;
+    if (inputMode !== 'pointer' || (e.pointerType === 'touch' && !e.isPrimary)) return;
     // Coalesced events recover the sub-frame motion Chrome batches per frame —
     // the difference between a 120 Hz and a 60 Hz swing measurement.
     const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const ev of events.length ? events : [e]) {
+      const sample = pointerSample(ev);
       pointerPos = {
-        x: ev.clientX / window.innerWidth,
+        x: sample.x,
         y: ev.clientY / window.innerHeight,
       };
-      const swing = pointerDetector.update({
-        t: ev.timeStamp / 1000, // same clock as performance.now()
-        x: pointerPos.x,
-        y: pointerPos.y,
-      });
+      const swing = pointerDetector.update(sample);
       if (swing) pendingPointerSwing = swing;
     }
   });
@@ -529,6 +545,7 @@ async function main() {
           hud.hideOverlay();
           match.calibrated();
           beginServe(now);
+          hud.setHint(SHOT_HINT);
         }
       }
       prevFrame = frame;
@@ -612,8 +629,9 @@ async function main() {
               stats.swings++;
               stats.offSumS += off;
               const perfect = off < 0.05;
+              const timing = perfect ? 'Perfect!' : swing.timestamp < incoming.idealContactTime ? 'Early!' : 'Late!';
               hud.flash(
-                perfect ? 'Perfect!' : swing.timestamp < incoming.idealContactTime ? 'Early!' : 'Late!',
+                swing.shotType === 'flat' ? timing : `${SHOT_LABELS[swing.shotType]}! · ${timing}`,
                 perfect ? 'great' : 'good',
               );
               pendingPerfect = perfect;

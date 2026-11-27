@@ -63,6 +63,69 @@ describe('PointerSwingDetector', () => {
     expect(events).toHaveLength(0);
   });
 
+  it.each([
+    ['flat', 0.02],
+    ['topspin', -0.15],
+    ['lob', -0.4],
+    ['slice', 0.18],
+  ] as const)('classifies a %s flick from the pointer path', (shotType, deltaY) => {
+    const d = new PointerSwingDetector();
+    const events = feed(d, 0, 0.1, (p) => ({ x: 0.3 + 0.3 * p, y: 0.5 + deltaY * p }));
+    expect(events).toMatchObject([{ event: { shotType } }]);
+  });
+
+  it('rejects an upward flick with too little sideways intent', () => {
+    const d = new PointerSwingDetector();
+    const events = feed(d, 0, 0.1, (p) => ({ x: 0.3 + 0.15 * p, y: 0.7 - 0.5 * p }));
+    expect(events).toHaveLength(0);
+  });
+
+  it('registers a short slice after an idle gap with no pointer samples', () => {
+    const d = new PointerSwingDetector();
+    const lob = feed(d, 0, 0.075, (p) => ({ x: 0.68 - 0.36 * p, y: 0.75 - 0.48 * p }));
+    expect(lob).toMatchObject([{ event: { shotType: 'lob' } }]);
+    const slice = feed(d, 3, 0.075, (p) => ({ x: 0.32 + 0.36 * p, y: 0.3 + 0.20 * p }));
+    expect(slice).toMatchObject([{ event: { shotType: 'slice' } }]);
+  });
+
+  it('registers a fast sparse swipe without double-firing during continuous motion', () => {
+    const d = new PointerSwingDetector();
+    const events = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+      .map((t) => d.update({ t, x: 0.1 + 1.5 * t, y: 0.5 - 0.8 * t }))
+      .filter(Boolean);
+    expect(events).toMatchObject([{ shotType: 'topspin', timestamp: 0.1 }]);
+  });
+
+  it('does not rearm when a continuous sparse swipe briefly slows down', () => {
+    const d = new PointerSwingDetector();
+    const events = [[0, 0.1], [0.1, 0.28], [0.4, 0.52], [0.5, 0.7]]
+      .map(([t, x]) => d.update({ t, x, y: 0.5 }))
+      .filter(Boolean);
+
+    expect(events).toMatchObject([{ timestamp: 0.1 }]);
+  });
+
+  it('ignores repositioning between touch contacts and registers the next swipe', () => {
+    const d = new PointerSwingDetector();
+    d.update({ t: 0, x: 0.2, y: 0.5 });
+    d.reset();
+    const reposition = d.update({ t: 0.1, x: 0.6, y: 0.5 });
+    const swipe = feed(d, 0.11, 0.075, (p) => ({ x: 0.6 - 0.3 * p, y: 0.5 + 0.15 * p }));
+
+    expect(reposition).toBeNull();
+    expect(swipe).toMatchObject([{ event: { shotType: 'slice' } }]);
+  });
+
+  it('includes touchdown in the motion window for a quick touch swipe', () => {
+    const d = new PointerSwingDetector();
+    d.beginContact({ t: 0, x: 0.2, y: 0.5 });
+    d.reset();
+    d.beginContact({ t: 0.1, x: 0.2, y: 0.5 });
+
+    expect(d.update({ t: 0.12, x: 0.35, y: 0.5 })).toBeNull();
+    expect(d.update({ t: 0.14, x: 0.5, y: 0.5 })).toMatchObject({ shotType: 'flat' });
+  });
+
   it('merges back-to-back flicks into one event, fires again after a hold', () => {
     const d = new PointerSwingDetector();
     expect(feed(d, 0, 0.1, horizontal(0.3, 0.6))).toHaveLength(1);

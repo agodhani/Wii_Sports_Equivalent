@@ -32,6 +32,7 @@ function frameOf(t: number, wrist: Vec2, side: 'left' | 'right', o: BodyOpts = {
     leftHip: { x: 0.42, y: 0.7 },
     rightHip: { x: 0.58, y: 0.7 },
     shoulderWidth: Math.hypot(leftShoulder.x - rightShoulder.x, leftShoulder.y - rightShoulder.y),
+    aspectRatio: 1,
     trackingLost: lost,
   };
 }
@@ -113,6 +114,70 @@ describe('SwingDetector', () => {
   it('ignores fast purely vertical motion', () => {
     const d = new SwingDetector('right');
     expect(verticalSweep(d, 0.3, 0.6, 0.2, 0)).toHaveLength(0);
+  });
+
+  it.each([
+    ['flat', 0.02],
+    ['topspin', -0.15],
+    ['lob', -0.38],
+    ['slice', 0.18],
+  ] as const)('classifies a %s swing from the wrist path', (shotType, deltaY) => {
+    const d = new SwingDetector('right');
+    const events = [];
+    for (let i = 0; i <= 6; i++) {
+      const p = i / 6;
+      const event = d.update(frameOf(i / 30, { x: 0.8 - 0.3 * p, y: 0.5 + deltaY * p }, 'right'));
+      if (event) events.push(event);
+    }
+    expect(events).toMatchObject([{ side: 'forehand', shotType }]);
+  });
+
+  it('does not count whole-body vertical movement as wrist lift', () => {
+    const d = new SwingDetector('right');
+    const events = [];
+    for (let i = 0; i <= 6; i++) {
+      const p = i / 6;
+      const f = frameOf(i / 30, { x: 0.8 - 0.3 * p, y: 0.6 - 0.4 * p }, 'right');
+      f.leftShoulder.y -= 0.4 * p;
+      f.rightShoulder.y -= 0.4 * p;
+      const event = d.update(f);
+      if (event) events.push(event);
+    }
+    expect(events).toMatchObject([{ shotType: 'flat' }]);
+  });
+
+  it('classifies a wide-frame diagonal by its pixel slope', () => {
+    const d = new SwingDetector('right');
+    d.update({ ...frameOf(0, { x: 0.8, y: 0.65 }, 'right'), aspectRatio: 16 / 9 });
+    const event = d.update({
+      ...frameOf(0.08, { x: 0.58, y: 0.39 }, 'right'),
+      aspectRatio: 16 / 9,
+    });
+    expect(event?.shotType).toBe('topspin');
+  });
+
+  it('does not turn a level sweep into slice when shoulders narrow', () => {
+    const d = new SwingDetector('right');
+    d.update(frameOf(0, { x: 0.8, y: 0.6 }, 'right'));
+    const event = d.update({
+      ...frameOf(0.08, { x: 0.68, y: 0.6 }, 'right'),
+      leftShoulder: { x: 0.44, y: 0.4 },
+      rightShoulder: { x: 0.56, y: 0.4 },
+      shoulderWidth: 0.12,
+    });
+    expect(event?.shotType).toBe('flat');
+  });
+
+  it('does not turn a level wrist path into slice when one shoulder rises', () => {
+    const d = new SwingDetector('right');
+    d.update(frameOf(0, { x: 0.8, y: 0.6 }, 'right'));
+    const event = d.update({
+      ...frameOf(0.08, { x: 0.68, y: 0.6 }, 'right'),
+      leftShoulder: { x: 0.4, y: 0.4 },
+      rightShoulder: { x: 0.55, y: 0.25 },
+      shoulderWidth: Math.hypot(0.15, 0.15),
+    });
+    expect(event?.shotType).toBe('flat');
   });
 
   it('left-handed player fires forehand when left wrist starts left of the midpoint', () => {

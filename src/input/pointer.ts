@@ -1,10 +1,11 @@
 import type { SwingEvent } from '../types';
+import { classifyShot } from '../swing/shotType';
 
 /**
  * Swing detection from pointer (mouse/touch) motion — the no-camera input path.
  *
  * Samples carry a timestamp in seconds (performance.now() clock) and a position
- * normalized to the viewport (0..1), so speeds are measured in
+ * normalized by viewport width on both axes, so speeds are measured in
  * viewport-widths/sec. Velocity is measured across a short time window rather
  * than between consecutive events, the same trick the pose detector uses to
  * stay independent of event rate.
@@ -17,13 +18,15 @@ import type { SwingEvent } from '../types';
 
 export interface PointerSample {
   t: number; // seconds (performance clock)
-  x: number; // normalized 0..1 of viewport
+  x: number;
   y: number;
 }
 
 export const POINTER_TRIGGER = 1.2; // horizontal speed, viewport-widths/sec
 const WINDOW_S = 0.08;              // measurement window
 const MIN_WINDOW_S = 0.03;          // need at least this much span to measure
+const MIN_RISE = 0.012;             // viewport widths
+const MAX_LOB_SLOPE = 2.5;
 const RESET_SPEED = 0.4;
 const COOLDOWN_S = 0.25;
 
@@ -37,7 +40,31 @@ export class PointerSwingDetector {
   /** Live horizontal pointer speed, viewport-widths/sec — for the swing meter. */
   strength = 0;
 
+  reset(): void {
+    this.state = 'idle';
+    this.history = [];
+    this.triggeredAt = 0;
+    this.strength = 0;
+  }
+
+  beginContact(s: PointerSample): void {
+    this.reset();
+    this.history.push(s);
+  }
+
   update(s: PointerSample): SwingEvent | null {
+    const previous = this.history[this.history.length - 1];
+    let sparseStart: PointerSample | undefined;
+    if (previous && s.t - previous.t > WINDOW_S) {
+      this.history = [];
+      this.strength = 0;
+      const speed = Math.abs(s.x - previous.x) / (s.t - previous.t);
+      if (speed >= POINTER_TRIGGER) {
+        sparseStart = previous;
+      } else if (speed < RESET_SPEED && s.t - this.triggeredAt >= COOLDOWN_S) {
+        this.state = 'idle';
+      }
+    }
     this.history.push(s);
 
     // Keep exactly one sample at or before the window start, so the span always
@@ -46,7 +73,7 @@ export class PointerSwingDetector {
       this.history.shift();
     }
 
-    const oldest = this.history[0];
+    const oldest = sparseStart ?? this.history[0];
     const span = s.t - oldest.t;
     if (span < MIN_WINDOW_S) return null;
 
@@ -62,12 +89,17 @@ export class PointerSwingDetector {
       return null;
     }
 
-    // A swing is a sideways flick: fast AND horizontal-dominant.
-    if (horizontal >= POINTER_TRIGGER && horizontal > Math.abs(vy)) {
+    const shotType = classifyShot(horizontal * span, -vy * span, MIN_RISE);
+    // A lob can be steeper than a sideways flick, but still needs lateral intent.
+    if (
+      horizontal >= POINTER_TRIGGER &&
+      (horizontal > Math.abs(vy) || (shotType === 'lob' && -vy <= horizontal * MAX_LOB_SLOPE))
+    ) {
       this.state = 'cooldown';
       this.triggeredAt = s.t;
       return {
         side: 'forehand', // placeholder — caller picks forehand/backhand
+        shotType,
         // Map pointer speed onto the shoulder-widths/sec range resolveHit's
         // power curve expects: trigger threshold → 4, ~3.7 widths/s → 12.
         speed: 4 + 8 * clamp((horizontal - POINTER_TRIGGER) / 2.5, 0, 1),

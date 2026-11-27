@@ -83,6 +83,7 @@ export class PoseTracker {
       leftHip: point(IDX.LH),
       rightHip: point(IDX.RH),
       shoulderWidth: Math.hypot(ls.x - rs.x, ls.y - rs.y),
+      aspectRatio: video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 1,
       trackingLost: false,
     };
     return this.lastFrame;

@@ -7,11 +7,31 @@ import {
   BALL_RADIUS,
   type BallState,
 } from '../src/game/ball';
+import { resolveHit } from '../src/game/hit';
+import type { ShotType } from '../src/types';
 
 const simulate = (b: BallState, seconds: number): BallState => {
   for (let i = 0; i < seconds * 240; i++) b = stepBall(b, 1 / 240);
   return b;
 };
+
+function firstFlight(shotType: ShotType, speed: number, dt = 1 / 240) {
+  const shot = resolveHit(
+    { shotType, side: 'forehand', speed, direction: 1, timestamp: 1 },
+    { ballSide: 'forehand', idealContactTime: 1.1 },
+  )!;
+  let b = launchBall({ x: 0, y: 1, z: 9.8 }, shot);
+  let apex = b.pos.y;
+  for (let t = 0; t < 3; t += dt) {
+    const next = stepBall(b, dt);
+    if (next.vel.y > 0 && b.vel.y < 0) {
+      return { shot, apex, before: b, bounce: next };
+    }
+    apex = Math.max(apex, next.pos.y);
+    b = next;
+  }
+  throw new Error(`${shotType} did not bounce`);
+}
 
 describe('ball physics', () => {
   it('falls under gravity', () => {
@@ -71,5 +91,49 @@ describe('ball physics', () => {
     expect(b.pos.x).toBeCloseTo(2, 1);
     expect(b.pos.z).toBeCloseTo(-8, 1);
     expect(b.pos.y).toBeLessThan(0.5);         // near the ground at landing
+  });
+
+  it.each([4, 8, 12])('lands each trajectory in court at swing speed %s', (speed) => {
+    for (const shotType of ['flat', 'topspin', 'lob', 'slice'] as const) {
+      const { shot, bounce } = firstFlight(shotType, speed);
+      expect(Math.abs(bounce.pos.x - shot.targetX)).toBeLessThan(0.1);
+      expect(Math.abs(bounce.pos.z - shot.targetZ)).toBeLessThan(0.1);
+      expect(bounce.pos.z).toBeGreaterThan(-11.9);
+    }
+  });
+
+  it('dips and kicks on topspin, lifts on a lob, and skids on a slice', () => {
+    const flat = firstFlight('flat', 8);
+    const top = firstFlight('topspin', 8);
+    const lob = firstFlight('lob', 8);
+    const slice = firstFlight('slice', 8);
+    expect(top.apex).toBeLessThan(flat.apex);
+    expect(top.bounce.pos.z).toBeGreaterThan(flat.bounce.pos.z);
+    expect(Math.abs(top.bounce.vel.z)).toBeGreaterThan(Math.abs(top.before.vel.z));
+    expect(lob.apex).toBeGreaterThan(Math.max(flat.apex, top.apex, slice.apex));
+    expect(lob.shot.flightTime).toBeGreaterThan(flat.shot.flightTime);
+    expect(lob.bounce.pos.z).toBeLessThan(flat.bounce.pos.z);
+    expect(slice.bounce.vel.y).toBeLessThan(flat.bounce.vel.y);
+    expect(Math.abs(slice.bounce.vel.z)).toBeLessThan(Math.abs(slice.before.vel.z));
+  });
+
+  it.each([1 / 60, 0.05])('lands a full-power lob before the CPU strike plane (dt=%s)', (dt) => {
+    const { apex, bounce } = firstFlight('lob', 12, dt);
+    expect(apex).toBeGreaterThan(firstFlight('flat', 12, dt).apex);
+    expect(bounce.pos.z).toBeGreaterThan(-9.8);
+    expect(bounce.pos.z).toBeLessThan(-8.5);
+  });
+
+  it.each([1 / 60, 0.05])('lets a full-power slice skid before the CPU can return it (dt=%s)', (dt) => {
+    const { bounce, before } = firstFlight('slice', 12, dt);
+    expect(bounce.pos.z).toBeGreaterThan(-9.8);
+    expect(Math.abs(bounce.vel.z)).toBeLessThan(Math.abs(before.vel.z));
+  });
+
+  it('applies more downward acceleration with topspin and less with backspin', () => {
+    const b: BallState = { pos: { x: 0, y: 2, z: 0 }, vel: { x: 0, y: 0, z: -8 } };
+    const flat = stepBall(b, 0.05);
+    expect(stepBall({ ...b, spin: 1 }, 0.05).vel.y).toBeLessThan(flat.vel.y);
+    expect(stepBall({ ...b, spin: -1 }, 0.05).vel.y).toBeGreaterThan(flat.vel.y);
   });
 });
