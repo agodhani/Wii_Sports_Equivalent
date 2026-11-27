@@ -463,7 +463,10 @@ async function main() {
       if (servePromptPending) {
         servePromptPending = false;
         serveAt = now;
+        pointerDetector = new PointerSwingDetector();
+        pendingPointerSwing = null;
         hud.setHint(playerServeHint());
+        return;
       }
       const playerServing = match.server === 'player';
       if (playerServing && (!swing || swing.timestamp < serveAt)) return;
@@ -893,6 +896,7 @@ async function main() {
         cpuGames: match.cpuGames,
         server: match.server,
         serveAttempt: match.serveAttempt,
+        serveAt,
         serveReady: match.phase === 'serving' && match.server === 'player' &&
           !delivery && !paused && !servePromptPending,
         inputMode,
