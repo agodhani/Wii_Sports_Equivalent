@@ -62,4 +62,30 @@ describe('multiplayer singles', () => {
     expect(guest.accept({ ...scored, seq: scored.seq + 1, ball: { pos: null } })).toBe(false);
     expect(guest.snapshot).toMatchObject({ scores: { host: 0, guest: 1 }, phase: 'serving' });
   });
+
+  it.each([
+    { offset: 0, delay: 0.6, hit: true },
+    { offset: 0.2, delay: 0.6, hit: false },
+    { offset: 0, delay: 0.8, hit: false },
+  ])('bounds guest delivery independently of contact accuracy ($offset, $delay)', ({ offset, delay, hit }) => {
+    const host = new Singles(0, () => 0.75);
+    host.setPaused(false, 0);
+    host.advance(1, hands);
+    const first = host.snapshot(1).contact!;
+    host.submit('host', { ...swing, shot: first.id, side: first.side }, first.at);
+    host.advance(first.at + 0.02, hands);
+    const guest = host.snapshot(first.at + 0.02).contact!;
+    expect(guest.receiver).toBe('guest');
+
+    const arrival = guest.at + delay;
+    host.advance(arrival, hands);
+    expect(host.snapshot(arrival).contact?.id).toBe(guest.id);
+    host.submit('guest', { ...swing, shot: guest.id, side: guest.side, offset }, arrival);
+    host.advance(arrival + 0.01, hands);
+    expect(host.snapshot(arrival + 0.01).rally).toBe(hit ? 2 : 1);
+    if (!hit) {
+      host.advance(guest.at + 1, hands);
+      expect(host.snapshot(guest.at + 1)).toMatchObject({ phase: 'serving', scores: { host: 1, guest: 0 } });
+    }
+  });
 });

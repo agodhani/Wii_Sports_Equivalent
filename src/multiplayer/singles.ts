@@ -50,7 +50,8 @@ export function swingInput(swing: SwingEvent, contact: Contact, localContactAt: 
 const PLANE = 9.8;
 const BASELINE = 11;
 const FRAME_STEP = 1 / 120;
-const DELIVERY_GRACE = 0.25;
+const LOCAL_DELIVERY_GRACE = 0.25;
+const GUEST_DELIVERY_GRACE = 0.75;
 
 export class Singles {
   private match = new Match();
@@ -89,8 +90,13 @@ export class Singles {
   submit(role: Role, input: SwingInput, now: number): void {
     const contact = this.contact;
     if (this.pausedAt !== null || this.match.phase !== 'rally' || !contact || this.pending ||
-        role !== contact.receiver || now > contact.at + CONTACT_WINDOW_S + DELIVERY_GRACE ||
-        now < contact.at - CONTACT_WINDOW_S - DELIVERY_GRACE) return;
+        role !== contact.receiver) return;
+    if (role === 'guest') {
+      const swingAt = contact.at + input.offset;
+      if (now < swingAt - LOCAL_DELIVERY_GRACE || now > swingAt + GUEST_DELIVERY_GRACE) return;
+    } else if (Math.abs(now - contact.at) > CONTACT_WINDOW_S + LOCAL_DELIVERY_GRACE) {
+      return;
+    }
     this.pending = returnShot(input, contact);
   }
 
@@ -127,7 +133,8 @@ export class Singles {
         const next = other(receiver);
         this.rally++;
         this.launch(from, this.pending, next, now, hands[next]);
-      } else if (this.reachedPlane && now >= this.contact.at + CONTACT_WINDOW_S + DELIVERY_GRACE) {
+      } else if (this.reachedPlane && now >= this.contact.at + CONTACT_WINDOW_S +
+          (receiver === 'guest' ? GUEST_DELIVERY_GRACE : LOCAL_DELIVERY_GRACE)) {
         this.point(other(receiver), now);
       }
     }
