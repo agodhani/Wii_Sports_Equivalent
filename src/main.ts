@@ -17,6 +17,9 @@ import { cpuReturn } from './game/cpu';
 import { Scene } from './render/scene';
 import { Hud } from './render/hud';
 import { Sfx } from './audio/sfx';
+import { SinglesSession } from './multiplayer/session';
+import { inView, other } from './multiplayer/singles';
+import type { Role } from './multiplayer/transport';
 import type {
   CpuDifficulty,
   Handedness,
@@ -117,6 +120,11 @@ async function main() {
   let reportOpen = false;
   let confettiUntil = 0;
   let confettiNext = 0;
+  let online: SinglesSession | null = null;
+  let onlineNotice = '';
+  let onlineRally = 0;
+  let onlineLobby = true;
+  let loadingOnlineCamera = false;
 
   // calibration state
   let visibleSince: number | null = null;
@@ -129,6 +137,11 @@ async function main() {
     onPointer: (d: CpuDifficulty) => startPointerMode(d),
     // the challenge CTA goes straight to pointer mode — instant, no camera
     onChallenge: () => challenge && startPointerMode(challenge.cpu),
+    onMultiplayer: () => {
+      const bytes = crypto.getRandomValues(new Uint8Array(5));
+      const code = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
+      startOnline(code, 'host');
+    },
   };
   hud.showHome(homeHandlers, challenge);
 
@@ -152,6 +165,13 @@ async function main() {
   });
 
   async function startCameraMode(d: CpuDifficulty) {
+    const room = online;
+    if (room) {
+      if (loadingOnlineCamera || inputMode) return;
+      loadingOnlineCamera = true;
+      onlineLobby = false;
+      hud.hideOnlineLobby();
+    }
     sfx.unlock(); // the Play click is the user gesture browsers require for audio
     difficulty = d;
     stats = newStats();
@@ -163,6 +183,8 @@ async function main() {
       // a second run (Change mode → camera again) reuses the live stream
       if (!video.srcObject) await startCamera(video);
     } catch (e) {
+      if (online !== room) return;
+      loadingOnlineCamera = false;
       hud.showOverlay(
         'Camera unavailable',
         e instanceof Error && e.message === 'camera-denied'
@@ -172,10 +194,13 @@ async function main() {
       );
       return;
     }
+    if (online !== room) return;
     hud.showOverlay('Loading motion tracking…', 'First load can take a few seconds');
     try {
       tracker = await loadTracker();
     } catch {
+      if (online !== room) return;
+      loadingOnlineCamera = false;
       hud.showOverlay(
         'Could not load motion tracking',
         'Check your connection, or play without a camera.',
@@ -183,6 +208,8 @@ async function main() {
       );
       return;
     }
+    if (online !== room) return;
+    loadingOnlineCamera = false;
     inputMode = 'camera';
     leaveMenu();
     // clean calibration slate — a previous run leaves these primed
@@ -198,6 +225,7 @@ async function main() {
   }
 
   function startPointerMode(d: CpuDifficulty) {
+    if (online && (loadingOnlineCamera || inputMode)) return;
     sfx.unlock();
     difficulty = d;
     stats = newStats();
@@ -206,8 +234,116 @@ async function main() {
     hud.hideOverlay();
     match.start();
     match.calibrated(); // pointer input needs no calibration
-    beginServe(performance.now() / 1000);
+    if (!online) beginServe(performance.now() / 1000);
     hud.setHint('Swipe sideways across the screen as the ball reaches you');
+  }
+
+  function startOnline(code: string, role: Role) {
+    if (online) return;
+    try {
+      online = new SinglesSession(code, role, finishOnline);
+    } catch {
+      hud.toast('Multiplayer needs a secure connection and a browser with WebRTC.');
+      return;
+    }
+    onlineLobby = true;
+    onlineNotice = '';
+    onlineRally = 0;
+    const invite = role === 'host' ? `${location.origin}${location.pathname}?room=${code}` : null;
+    hud.showOnlineLobby(code, invite, {
+      camera: () => { void startCameraMode(difficulty); },
+      pointer: () => startPointerMode(difficulty),
+      leave: () => finishOnline(),
+    });
+  }
+
+  function finishOnline(reason?: string) {
+    online?.close();
+    online = null;
+    loadingOnlineCamera = false;
+    hud.closeOnlineLobby();
+    hud.hidePreview();
+    hud.clearFlash();
+    hud.setHint(null);
+    scene.setTimingCue(null);
+    const url = new URL(location.href);
+    if (url.searchParams.has('room')) {
+      url.searchParams.delete('room');
+      history.replaceState(null, '', url);
+    }
+    onChangeMode();
+    if (reason) hud.toast(reason);
+  }
+
+  function stepOnline(room: SinglesSession, now: number, dt: number, frame: PoseFrame | null, lost: boolean) {
+    const ready = match.phase === 'serving' && !lost;
+    const swing = !ready ? null : inputMode === 'pointer' ? pendingPointerSwing :
+      frame && detector ? detector.update(frame) : null;
+    pendingPointerSwing = null;
+    const state = room.tick(now, ready, inputMode === 'pointer' ? 'right' : handedness, swing, inputMode === 'pointer');
+    if (onlineLobby) {
+      const notice = room.status === 'open' ? 'Connected · choose how to play' :
+        room.status === 'waiting' ? 'Waiting for your opponent to join' :
+        room.status === 'lost' ? 'Opponent disconnected · reconnecting…' : 'Connecting…';
+      if (notice !== onlineNotice) {
+        onlineNotice = notice;
+        hud.setOnlineLobbyStatus(notice);
+      }
+      if (!inputMode || room.status !== 'open') return;
+      onlineLobby = false;
+      onlineNotice = '';
+      hud.hideOnlineLobby();
+    }
+    if (!inputMode || match.phase === 'calibration') return;
+
+    const opponent = other(room.role);
+    const notice = room.status === 'lost' ? 'Opponent disconnected · reconnecting…' :
+      room.status !== 'open' ? 'Waiting for your opponent to join' :
+      state?.phase === 'gameover' ? (state.winner === room.role ? 'You win!' : 'Opponent wins') :
+      lost ? 'Step back into frame to continue' :
+      !state || state.paused ? 'Waiting for both players to be ready' : '';
+    if (notice !== onlineNotice) {
+      onlineNotice = notice;
+      if (state?.phase === 'gameover') {
+        hud.showOverlay(notice, `${state.scores[room.role]} — ${state.scores[opponent]}`, {
+          label: 'Back to home', onClick: () => finishOnline(),
+        });
+      } else if (notice) {
+        hud.showOverlay('Paused', notice);
+      } else {
+        hud.hideOverlay();
+      }
+    }
+    if (!state) return;
+    hud.setScore(state.scores[room.role], state.scores[opponent]);
+    if (state.rally !== onlineRally) {
+      if (state.rally > onlineRally) {
+        sfx.hit(0.5);
+        if (state.contact?.receiver !== room.role) hud.flash('Nice return!', 'good');
+        else scene.cpuSwing();
+      }
+      onlineRally = state.rally;
+      hud.setRally(onlineRally);
+    }
+    const contact = state.contact?.receiver === room.role ? state.contact : null;
+    const ball = state.ball;
+    const frozen = state.paused || room.status !== 'open';
+    const extra = frozen || !state.contact ? 0 :
+      Math.max(0, Math.min(0.1, room.hostTime(now) - state.at, state.contact.at - state.at));
+    const position = ball ? inView(extra > 0 ? stepBall(ball, extra).pos : ball.pos, room.role) : null;
+    if (position) scene.setBall(position);
+    scene.setBallVisible(!!position);
+    scene.setTimingCue(contact && !frozen ? {
+      pos: inView(contact.pos, room.role), ...timingCue(now, room.localContactAt),
+    } : null);
+    if (!frozen) {
+      const ballOnRight = (contact?.side === 'forehand') ===
+        ((inputMode === 'pointer' ? 'right' : handedness) === 'right');
+      const target = contact && position ? position.x + (ballOnRight ? -BALL_SIDE_OFFSET : BALL_SIDE_OFFSET) : 0;
+      playerX += (target - playerX) * (1 - Math.pow(0.92, dt * 60));
+      scene.setPlayerX(playerX);
+      scene.setCpuX(position && !contact ? position.x * 0.9 : 0);
+    }
   }
 
   window.addEventListener('pointermove', (e) => {
@@ -528,10 +664,22 @@ async function main() {
         } else {
           hud.hideOverlay();
           match.calibrated();
-          beginServe(now);
+          if (!online) beginServe(now);
+          else if (online.status !== 'open') {
+            onlineLobby = true;
+            hud.showWaitingOnlineLobby();
+          }
         }
       }
       prevFrame = frame;
+    }
+
+    if (online) {
+      stepOnline(online, now, dt, frame, lost);
+      scene.update(dt);
+      scene.render();
+      requestAnimationFrame(loop);
+      return;
     }
 
     // ---- pause on tracking loss during play ----
@@ -792,20 +940,28 @@ async function main() {
   if (import.meta.env.DEV) {
     (window as unknown as Record<string, unknown>).__wt = {
       state: () => ({
-        phase: match.phase,
-        idealContactTime: incoming?.idealContactTime ?? null,
+        phase: online?.snapshot && inputMode && match.phase !== 'calibration' ? online.snapshot.phase : match.phase,
+        idealContactTime: online ? (
+          online.snapshot?.contact?.receiver === online.role && !online.snapshot.paused &&
+          online.status === 'open' ? online.localContactAt : null
+        ) : incoming?.idealContactTime ?? null,
         now: performance.now() / 1000,
         difficulty,
-        playerScore: match.playerScore,
-        cpuScore: match.cpuScore,
+        playerScore: online?.snapshot?.scores[online.role] ?? match.playerScore,
+        cpuScore: online?.snapshot?.scores[other(online.role)] ?? match.cpuScore,
         inputMode,
-        rally,
+        rally: online?.snapshot?.rally ?? rally,
         demoZ: demo?.pos.z ?? null,
         reportOpen,
+        onlineRole: online?.role ?? null,
+        onlineStatus: online?.status ?? null,
+        shot: online?.snapshot?.contact?.id ?? null,
       }),
     };
   }
 
+  const invite = new URLSearchParams(location.search).get('room')?.toUpperCase();
+  if (invite && /^[A-F0-9]{10}$/.test(invite)) startOnline(invite, 'guest');
   requestAnimationFrame(loop);
 }
 
