@@ -104,7 +104,8 @@ export class Hud {
         </div>
       </div>
       <section id="online-lobby" aria-label="Multiplayer room" style="position:fixed;inset:0;
-        display:none;place-items:center;background:rgba(10,14,24,.6);color:#fff;text-align:center">
+        display:none;place-items:safe center;overflow:auto;touch-action:pan-y;
+        background:rgba(10,14,24,.6);color:#fff;text-align:center">
         <div style="display:grid;gap:12px;width:min(360px,calc(100% - 64px));padding:24px;
           border-radius:16px;background:#161d2c">
           <h2 style="margin:0">Multiplayer singles</h2>
