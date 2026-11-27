@@ -58,9 +58,10 @@ export class PointerSwingDetector {
     if (previous && s.t - previous.t > WINDOW_S) {
       this.history = [];
       this.strength = 0;
-      if (Math.abs(s.x - previous.x) >= POINTER_TRIGGER * (s.t - previous.t)) {
+      const speed = Math.abs(s.x - previous.x) / (s.t - previous.t);
+      if (speed >= POINTER_TRIGGER) {
         sparseStart = previous;
-      } else if (s.t - this.triggeredAt >= COOLDOWN_S) {
+      } else if (speed < RESET_SPEED && s.t - this.triggeredAt >= COOLDOWN_S) {
         this.state = 'idle';
       }
     }

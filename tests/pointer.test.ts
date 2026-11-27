@@ -96,6 +96,15 @@ describe('PointerSwingDetector', () => {
     expect(events).toMatchObject([{ shotType: 'topspin', timestamp: 0.1 }]);
   });
 
+  it('does not rearm when a continuous sparse swipe briefly slows down', () => {
+    const d = new PointerSwingDetector();
+    const events = [[0, 0.1], [0.1, 0.28], [0.4, 0.52], [0.5, 0.7]]
+      .map(([t, x]) => d.update({ t, x, y: 0.5 }))
+      .filter(Boolean);
+
+    expect(events).toMatchObject([{ timestamp: 0.1 }]);
+  });
+
   it('ignores repositioning between touch contacts and registers the next swipe', () => {
     const d = new PointerSwingDetector();
     d.update({ t: 0, x: 0.2, y: 0.5 });
