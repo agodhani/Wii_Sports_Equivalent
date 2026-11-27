@@ -40,6 +40,13 @@ export class PointerSwingDetector {
   /** Live horizontal pointer speed, viewport-widths/sec — for the swing meter. */
   strength = 0;
 
+  reset(): void {
+    this.state = 'idle';
+    this.history = [];
+    this.triggeredAt = 0;
+    this.strength = 0;
+  }
+
   update(s: PointerSample): SwingEvent | null {
     const previous = this.history[this.history.length - 1];
     let sparseStart: PointerSample | undefined;

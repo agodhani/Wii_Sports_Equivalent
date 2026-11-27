@@ -213,6 +213,12 @@ async function main() {
     hud.setHint(SHOT_HINT);
   }
 
+  for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) {
+    window.addEventListener(type, (e) => {
+      if (inputMode === 'pointer' && e.pointerType === 'touch') pointerDetector.reset();
+    });
+  }
+
   window.addEventListener('pointermove', (e) => {
     if (inputMode !== 'pointer') return;
     // Coalesced events recover the sub-frame motion Chrome batches per frame —

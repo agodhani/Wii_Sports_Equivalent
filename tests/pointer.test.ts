@@ -96,6 +96,17 @@ describe('PointerSwingDetector', () => {
     expect(events).toMatchObject([{ shotType: 'topspin', timestamp: 0.1 }]);
   });
 
+  it('ignores repositioning between touch contacts and registers the next swipe', () => {
+    const d = new PointerSwingDetector();
+    d.update({ t: 0, x: 0.2, y: 0.5 });
+    d.reset();
+    const reposition = d.update({ t: 0.1, x: 0.6, y: 0.5 });
+    const swipe = feed(d, 0.11, 0.075, (p) => ({ x: 0.6 - 0.3 * p, y: 0.5 + 0.15 * p }));
+
+    expect(reposition).toBeNull();
+    expect(swipe).toMatchObject([{ event: { shotType: 'slice' } }]);
+  });
+
   it('merges back-to-back flicks into one event, fires again after a hold', () => {
     const d = new PointerSwingDetector();
     expect(feed(d, 0, 0.1, horizontal(0.3, 0.6))).toHaveLength(1);
