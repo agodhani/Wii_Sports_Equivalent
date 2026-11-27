@@ -22,11 +22,11 @@ test('match end → report → share → rematch → records survive reload', as
   }
   expect(hits, `attempts: ${attempts.join(' | ')}`).toBeGreaterThanOrEqual(1);
 
-  await loseMatch(page);
+  await loseMatch(page, true);
   await expect(page.locator('#report')).toBeVisible();
 
   // leftovers cleaned: flash cleared, hint + meter hidden, ball gone.
-  // Immediate read, not a retrying toHaveCSS — the last flash ('Miss!') fired
+  // Immediate read, not a retrying toHaveCSS — the last flash fired
   // milliseconds before the report and auto-hides after 700 ms, so only an
   // instant check can tell clearFlash() ran rather than the flash's own timer.
   expect(await page.$eval('#flash', (e) => e.style.opacity)).toBe('0');
@@ -39,6 +39,7 @@ test('match end → report → share → rematch → records survive reload', as
   expect(cpuGames).toBe(6);
   const card = page.locator('#report-card');
   await expect(card).toContainText('CPU wins');
+  await expect(card).toContainText('Double fault — into the net. Swing faster.');
   await expect(card).toContainText(`${playerGames} — 6`);
   await expect(card).toContainText('vs Hard CPU');
   await expect(card).toContainText('Perfect hits');

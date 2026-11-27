@@ -3,6 +3,7 @@ import { test as base, expect, type Page } from '@playwright/test';
 export const BASE = 'http://localhost:5299';
 export const GL_ARGS = ['--use-gl=angle', '--enable-unsafe-swiftshader'];
 export const RECORDS_KEY = 'webcam-tennis:records:v1';
+export const WEAK_SERVE_DISTANCE = 0.107;
 
 export interface WtState {
   phase: string;
@@ -198,14 +199,17 @@ export async function swingServe(page: Page, fault = false, distance?: number): 
 }
 
 /** Ignore CPU serves and fault intentionally on both attempts at player serves. */
-export async function loseMatch(page: Page): Promise<void> {
+export async function loseMatch(page: Page, finishIntoNet = false): Promise<void> {
   for (;;) {
     await page.waitForFunction(() => {
       const { phase, serveReady } = (window as unknown as { __wt: { state(): WtState } }).__wt.state();
       return phase === 'gameover' || serveReady;
-    }, undefined, { timeout: 20_000, polling: 100 });
-    if ((await state(page)).phase === 'gameover') return;
-    await swingServe(page, true);
+    }, undefined, { timeout: 30_000, polling: 100 });
+    const s = await state(page);
+    if (s.phase === 'gameover') return;
+    const matchPoint = s.cpuGames === 5 && s.playerGames < 5 && s.cpuScore >= 3 && s.cpuScore > s.playerScore;
+    if (finishIntoNet && matchPoint && s.serveAttempt === 2) await swingServe(page, false, WEAK_SERVE_DISTANCE);
+    else await swingServe(page, true);
   }
 }
 
