@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { serveContact, serveFlight, serveShot, serviceBoxX } from '../src/game/serve';
+import { PointerSwingDetector } from '../src/input/pointer';
 
 describe('serving', () => {
   it.each([
@@ -43,8 +44,12 @@ describe('serving', () => {
     expect(serveFlight('player', side, shot).fault).toBe(true);
   });
 
-  it('ends a serve that hits the net before its otherwise legal landing', () => {
-    const shot = { ...serveShot('player', 'deuce', null), flightTime: 0.35 };
+  it('faults a weak but recognized swipe into the net before its otherwise legal landing', () => {
+    const pointer = new PointerSwingDetector();
+    pointer.update({ t: 0, x: 0.6, y: 0.5 });
+    const swing = pointer.update({ t: 0.04, x: 0.55, y: 0.5 });
+    expect(swing).not.toBeNull();
+    const shot = serveShot('player', 'deuce', swing);
     const flight = serveFlight('player', 'deuce', shot);
     expect(flight.fault).toBe(true);
     expect(flight.duration).toBeLessThan(shot.flightTime);
