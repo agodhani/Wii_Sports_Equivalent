@@ -85,7 +85,7 @@ async function main() {
   let serveAt = 0;
   let servePromptPending = false;
   let delivery: (ReturnType<typeof serveFlight> & { startedAt: number }) | null = null;
-  let finishedOnDoubleFault = false;
+  let finalDoubleFault: string | null = null;
   let paused = false;
   let pauseStart = 0;
   let lastNow: number | null = null;
@@ -296,7 +296,7 @@ async function main() {
     stats = newStats();
     match.reset();
     hintCleared = false;
-    finishedOnDoubleFault = false;
+    finalDoubleFault = null;
     match.start();
     match.calibrated();
     beginServe(performance.now() / 1000);
@@ -325,7 +325,7 @@ async function main() {
     inputMode = null;
     pendingPointerSwing = null;
     hintCleared = false;
-    finishedOnDoubleFault = false;
+    finalDoubleFault = null;
     hud.setScore(match);
     hud.setScoreVisible(false);
     hud.setRally(0);
@@ -401,7 +401,7 @@ async function main() {
         won,
         player: match.playerGames,
         cpu: match.cpuGames,
-        finishedOnDoubleFault,
+        finalDoubleFault,
         difficulty,
         stats: {
           perfects: stats.perfects,
@@ -489,14 +489,17 @@ async function main() {
       return;
     }
     if (delivery.fault) {
+      const playerServing = match.server === 'player';
+      const guidance = playerServing && delivery.hitNet ? ' — into the net. Swing faster.' : '';
       delivery = null;
-      const receiver = match.server === 'player' ? 'cpu' : 'player';
+      const receiver = playerServing ? 'cpu' : 'player';
       if (match.serveFault() === 'fault') {
-        hud.flash('Fault', 'bad');
+        hud.flash(`Fault${guidance}`, 'bad');
         beginServe(now);
       } else {
-        hud.flash('Double fault', 'bad');
-        finishedOnDoubleFault = match.winner !== null;
+        const message = `Double fault${guidance}`;
+        hud.flash(message, 'bad');
+        if (match.winner) finalDoubleFault = message;
         pointReaction(receiver);
       }
       return;

@@ -54,6 +54,7 @@ describe('serving', () => {
     const shot = serveShot('player', 'deuce', swing);
     const flight = serveFlight('player', 'deuce', shot);
     expect(flight.fault).toBe(true);
+    expect(flight.hitNet).toBe(true);
     expect(flight.duration).toBeLessThan(shot.flightTime);
   });
 

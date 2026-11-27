@@ -139,7 +139,7 @@ export async function swingAtNextBall(
   return { flash, ideal, timing };
 }
 
-async function flick(page: Page, dir: number, ideal: number | null = null): Promise<FlickTiming> {
+async function flick(page: Page, dir: number, ideal: number | null = null, distance = 0.36): Promise<FlickTiming> {
   // A 0.36-viewport flick over 80 ms (~4.5 widths/s, well past the 1.2
   // trigger) starting 60 ms before ideal: the detector trips ~30 ms in, which
   // lands inside the ±50 ms Perfect band.
@@ -151,7 +151,7 @@ async function flick(page: Page, dir: number, ideal: number | null = null): Prom
   // the swing before checking contact in its next frame, so briefly blocking
   // the main thread doesn't change the outcome.
   return page.evaluate(
-    async ({ ideal, dir }) => {
+    async ({ ideal, dir, distance }) => {
       const LEAD_S = 0.06;
       const DUR_S = 0.08;
       const SPIN_S = 0.4;
@@ -166,7 +166,7 @@ async function flick(page: Page, dir: number, ideal: number | null = null): Prom
         const now = performance.now();
         const k = Math.min(1, (now - t0) / 1000 / DUR_S);
         if (now - lastDispatch >= 8 || k >= 1) {
-          const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
+          const fx = 0.5 + dir * distance * (k - 0.5);
           window.dispatchEvent(
             new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: innerHeight / 2 }),
           );
@@ -181,7 +181,7 @@ async function flick(page: Page, dir: number, ideal: number | null = null): Prom
         events,
       };
     },
-    { ideal, dir },
+    { ideal, dir, distance },
   );
 }
 
@@ -190,10 +190,10 @@ export const hudFps = (page: Page): Promise<string | null> =>
   page.$eval('#fps', (e) => e.textContent).catch(() => null);
 
 /** Flick through the real pointer input; aim into the box unless testing a fault. */
-export async function swingServe(page: Page, fault = false): Promise<void> {
+export async function swingServe(page: Page, fault = false, distance?: number): Promise<void> {
   const s = await state(page);
   const target = (s.playerScore + s.cpuScore) % 2 === 0 ? -1 : 1;
-  await flick(page, fault ? -target : target);
+  await flick(page, fault ? -target : target, null, distance);
   await page.waitForFunction(() => !(window as unknown as { __wt: { state(): WtState } }).__wt.state().serveReady);
 }
 

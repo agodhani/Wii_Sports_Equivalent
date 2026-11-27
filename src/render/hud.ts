@@ -7,7 +7,7 @@ export interface MatchReport {
   won: boolean;
   player: number;
   cpu: number;
-  finishedOnDoubleFault: boolean;
+  finalDoubleFault: string | null;
   difficulty: CpuDifficulty;
   stats: {
     perfects: number;
@@ -292,7 +292,7 @@ export class Hud {
       <div style="font-size:32px;font-weight:800;color:${r.won ? '#ffd23f' : '#fff'}">
         ${r.won ? 'You win!' : 'CPU wins'}</div>
       <div style="font-size:42px;font-weight:800;margin-top:2px">${r.player} — ${r.cpu}</div>
-      ${r.finishedOnDoubleFault ? '<div>Double fault</div>' : ''}
+      ${r.finalDoubleFault ? `<div>${r.finalDoubleFault}</div>` : ''}
       <div style="display:inline-block;margin-top:6px;padding:3px 12px;font-size:12px;
         border:1px solid rgba(255,255,255,.3);border-radius:999px;opacity:.85">vs ${cpuName} CPU</div>
       ${challengeLine}

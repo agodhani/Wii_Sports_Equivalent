@@ -46,9 +46,9 @@ export function serveFlight(server: Winner, side: ServiceSide, shot: ShotCommand
   const netTime = timeToReachZ(ball, 0);
   if (netTime !== null && netTime < shot.flightTime &&
       servePosition(ball, netTime).y - BALL_RADIUS <= NET_HEIGHT) {
-    return { ball, duration: netTime, fault: true };
+    return { ball, duration: netTime, fault: true, hitNet: true };
   }
   const x = serviceBoxX(server, side) * shot.targetX;
   const depth = (server === 'player' ? -1 : 1) * shot.targetZ;
-  return { ball, duration: shot.flightTime, fault: x < 0 || x > COURT_HALF_W || depth <= 0 || depth > SERVICE_Z };
+  return { ball, duration: shot.flightTime, fault: x < 0 || x > COURT_HALF_W || depth <= 0 || depth > SERVICE_Z, hitNet: false };
 }

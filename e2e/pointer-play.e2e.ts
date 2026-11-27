@@ -105,3 +105,11 @@ test('player swings to serve, gets two attempts, and changes court after a doubl
   await waitForPhase(page, 'rally');
   expect((await state(page)).idealContactTime).toBeNull(); // ball is heading to the CPU
 });
+
+test('a weak serve into the net tells the player to swing faster', async ({ page }) => {
+  await openGame(page);
+  await page.click('#home-pointer');
+  await expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
+  await swingServe(page, false, 0.107);
+  await expect(page.locator('#flash')).toHaveText('Fault — into the net. Swing faster.');
+});
