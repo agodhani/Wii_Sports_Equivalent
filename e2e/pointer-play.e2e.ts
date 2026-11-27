@@ -79,11 +79,22 @@ test('player swings to serve, gets two attempts, and changes court after a doubl
   await expect(serve).toHaveText('You serve · Deuce court · First serve');
   await expect(page.locator('#hint')).toHaveText('Swipe left to serve');
 
+  await serve.evaluate((el) => {
+    const observer = new MutationObserver(() => {
+      if (!el.textContent?.includes('Second serve')) return;
+      const hint = document.querySelector('#hint')!;
+      el.dataset.retryHintVisible = String(getComputedStyle(hint).display !== 'none');
+      observer.disconnect();
+    });
+    observer.observe(el, { childList: true });
+  });
   await swingServe(page, true);
   await expect(flash).toHaveText('Fault');
   await expect(points).toHaveText('0 — 0');
   await expect(serve).toHaveText('You serve · Deuce court · Second serve');
+  await expect(serve).toHaveAttribute('data-retry-hint-visible', 'false');
   await waitForServe();
+  await expect(page.locator('#hint')).toBeVisible();
   await swingServe(page, true);
   await expect(flash).toHaveText('Double fault');
   await expect(points).toHaveText('0 — 15');

@@ -84,6 +84,7 @@ async function main() {
   let cpuX = 0; // CPU's actual standing position on court (updated only when CPU strikes)
   let playerX = 0;
   let serveAt = 0;
+  let servePromptPending = false;
   let delivery: (ReturnType<typeof serveFlight> & { startedAt: number }) | null = null;
   let finishedOnDoubleFault = false;
   let paused = false;
@@ -277,12 +278,17 @@ async function main() {
     scene.setTimingCue(null);
     scene.setBall(from);
     scene.setBallVisible(true);
-    const aim = serviceBoxX(match.server, match.serviceSide) > 0 ? 'right' : 'left';
+    servePromptPending = playerServing && match.serveAttempt === 2;
     hud.setHint(playerServing
-      ? `${inputMode === 'pointer' ? 'Swipe' : 'Swing'} ${aim} to serve`
+      ? servePromptPending ? null : playerServeHint()
       : inputMode === 'pointer' && !hintCleared
         ? 'Swipe sideways across the screen as the ball reaches you'
         : null);
+  }
+
+  function playerServeHint(): string {
+    const aim = serviceBoxX('player', match.serviceSide) > 0 ? 'right' : 'left';
+    return `${inputMode === 'pointer' ? 'Swipe' : 'Swing'} ${aim} to serve`;
   }
 
   /** Restart the match after gameover without re-running calibration. */
@@ -454,8 +460,14 @@ async function main() {
 
   function stepServe(now: number, swing: SwingEvent | null) {
     if (!delivery) {
-      if (now < serveAt || (match.server === 'player' && (!swing || swing.timestamp < serveAt))) return;
+      if (now < serveAt) return;
+      if (servePromptPending) {
+        servePromptPending = false;
+        serveAt = now;
+        hud.setHint(playerServeHint());
+      }
       const playerServing = match.server === 'player';
+      if (playerServing && (!swing || swing.timestamp < serveAt)) return;
       const shot = serveShot(match.server, match.serviceSide, playerServing ? swing : null, Math.random() - 0.5);
       delivery = { ...serveFlight(match.server, match.serviceSide, shot), startedAt: now };
       if (!delivery.fault) {
@@ -880,7 +892,7 @@ async function main() {
         server: match.server,
         serveAttempt: match.serveAttempt,
         serveReady: match.phase === 'serving' && match.server === 'player' &&
-          !delivery && !paused && performance.now() / 1000 >= serveAt,
+          !delivery && !paused && !servePromptPending,
         inputMode,
         rally,
         demoZ: demo?.pos.z ?? null,
