@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { serveContact, serveFlight, serveShot, serviceBoxX } from '../src/game/serve';
+import { timeToReachZ } from '../src/game/ball';
+import { CPU_STRIKE_Z, cpuReturn } from '../src/game/cpu';
+import { serveContact, serveFlight, servePosition, serveShot, serviceBoxX } from '../src/game/serve';
 import { PointerSwingDetector } from '../src/input/pointer';
 
 describe('serving', () => {
@@ -53,5 +55,20 @@ describe('serving', () => {
     const flight = serveFlight('player', 'deuce', shot);
     expect(flight.fault).toBe(true);
     expect(flight.duration).toBeLessThan(shot.flightTime);
+  });
+
+  it.each([
+    ['deuce', -1, 12],
+    ['ad', 1, 12],
+    ['ad', 1, 7],
+  ] as const)('keeps a wide %s serve (direction %s, speed %s) returnable on Hard but not Easy', (side, direction, speed) => {
+    const shot = serveShot('player', side, { side: 'forehand', speed, direction, timestamp: 0 });
+    const flight = serveFlight('player', side, shot);
+    expect(flight.fault).toBe(false);
+    const atStrike = timeToReachZ(flight.ball, CPU_STRIKE_Z)!;
+    const { x } = servePosition(flight.ball, atStrike);
+    const lateX = servePosition(flight.ball, atStrike + 0.05).x;
+    expect(cpuReturn(lateX, 0, 1, () => 0.5, 'hard')).not.toBeNull();
+    expect(cpuReturn(x, 0, 1, () => 0.5, 'easy')).toBeNull();
   });
 });

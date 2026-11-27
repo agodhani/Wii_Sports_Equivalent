@@ -1,5 +1,8 @@
 import type { ShotCommand, CpuDifficulty } from '../types';
 
+export const CPU_Z = -11;
+export const CPU_STRIKE_Z = CPU_Z + 1.2;
+
 // 'hard' matches the single difficulty this was tuned at before difficulty
 // selection existed, kept as the default so existing behavior is unchanged
 // for any caller that doesn't pass a difficulty.

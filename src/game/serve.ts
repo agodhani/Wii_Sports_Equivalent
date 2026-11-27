@@ -1,4 +1,5 @@
 import { BALL_RADIUS, GRAVITY, launchBall, timeToReachZ, type BallState } from './ball';
+import { CPU_STRIKE_Z } from './cpu';
 import type { ServiceSide, Winner } from './match';
 import type { ShotCommand, SwingEvent, Vec3 } from '../types';
 
@@ -6,13 +7,15 @@ export const COURT_HALF_W = 4.11;
 export const SERVICE_Z = 6.4;
 const NET_HEIGHT = 0.98;
 const SERVE_Z = 11.95;
+const SERVICE_OFFSET = 1.8;
+const SERVE_WIDE_RETURN_X = 3.5;
 
 export function serviceBoxX(server: Winner, side: ServiceSide): number {
   return (server === 'player') === (side === 'deuce') ? -1 : 1;
 }
 
 export function serveContact(server: Winner, side: ServiceSide): Vec3 {
-  return { x: -1.8 * serviceBoxX(server, side), y: 1.65, z: server === 'player' ? SERVE_Z : -SERVE_Z };
+  return { x: -SERVICE_OFFSET * serviceBoxX(server, side), y: 1.65, z: server === 'player' ? SERVE_Z : -SERVE_Z };
 }
 
 export function serveShot(
@@ -20,9 +23,12 @@ export function serveShot(
 ): ShotCommand {
   const box = serviceBoxX(server, side);
   const power = swing ? Math.min(1, Math.max(0, (swing.speed - 4) / 8)) : 0.8;
+  const depth = Math.min(0.5 + 17 * power, 3.8 + 2 * power);
+  const landingWidth = (SERVE_WIDE_RETURN_X + SERVICE_OFFSET) *
+    (SERVE_Z + depth) / (SERVE_Z - CPU_STRIKE_Z) - SERVICE_OFFSET;
   return {
-    targetX: swing ? 3.4 * swing.direction : box * (2 + cpuAim * (cpuAim < 0 ? 2.7 : 1.4)),
-    targetZ: (server === 'player' ? -1 : 1) * Math.min(0.5 + 17 * power, 3.8 + 2 * power),
+    targetX: swing ? landingWidth * swing.direction : box * (2 + cpuAim * (cpuAim < 0 ? 2.7 : 1.4)),
+    targetZ: (server === 'player' ? -1 : 1) * depth,
     flightTime: 1.14 - 0.12 * power,
   };
 }

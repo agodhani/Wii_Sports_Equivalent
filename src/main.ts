@@ -14,7 +14,7 @@ import {
   parseChallenge,
   compareToChallenge,
 } from './game/challenge';
-import { cpuReturn } from './game/cpu';
+import { cpuReturn, CPU_STRIKE_Z, CPU_Z } from './game/cpu';
 import { Scene } from './render/scene';
 import { Hud } from './render/hud';
 import { Sfx } from './audio/sfx';
@@ -29,7 +29,6 @@ import type {
 } from './types';
 
 const PLAYER_Z = 11;
-const CPU_Z = -11;
 
 // Calibration: how vigorously the playing hand must wave to start the match.
 // Measured as average wrist speed in shoulder-widths/sec, so it is independent
@@ -755,7 +754,7 @@ async function main() {
         }
 
         // ball reaches CPU's strike plane
-        if (match.phase === 'rally' && ball.vel.z < 0 && ball.pos.z <= CPU_Z + 1.2) {
+        if (match.phase === 'rally' && ball.vel.z < 0 && ball.pos.z <= CPU_STRIKE_Z) {
           const reachTime = 1.0; // CPU had the ball's flight to react; fixed budget
           const ret = cpuReturn(ball.pos.x, cpuX, reachTime, Math.random, difficulty);
           if (ret) {
@@ -823,7 +822,7 @@ async function main() {
               flightTime: 1.1 + 0.3 * Math.random(),
             },
           );
-        } else if (demo.vel.z < 0 && demo.pos.z <= CPU_Z + 1.2) {
+        } else if (demo.vel.z < 0 && demo.pos.z <= CPU_STRIKE_Z) {
           // the demo "CPU" returns it toward the player
           scene.cpuSwing();
           scene.burst(demo.pos, 0.3, 0xffffff);
