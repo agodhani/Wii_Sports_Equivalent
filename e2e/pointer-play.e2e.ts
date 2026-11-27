@@ -73,7 +73,8 @@ test('angled pointer swings announce topspin, lob and slice', async ({ page }) =
 
   let prev: number | null = null;
   for (const [label, slope, dir] of [['Topspin', 0.55, 1], ['Lob', 1.35, -1], ['Slice', -0.55, 1]] as const) {
-    const { flash, ideal, timing } = await swingAtNextBall(page, prev, dir, slope);
+    const { flash, ideal, timing, contact } = await swingAtNextBall(page, prev, dir, slope);
+    expect(contact, `${label} did not connect: ${flash} ${JSON.stringify(timing)}`).toBe(true);
     expect(flash, `${label} flick: ${JSON.stringify(timing)}`).toMatch(
       new RegExp(`^${label}! · (Perfect|Early|Late)!$`),
     );

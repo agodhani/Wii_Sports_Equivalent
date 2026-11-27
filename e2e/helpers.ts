@@ -94,11 +94,10 @@ export interface FlickTiming {
 }
 
 /**
- * Wait for a fresh ball incoming to the player, then flick horizontally so the
+ * Wait for a fresh ball incoming to the player, then flick so the
  * pointer-swing detector fires ~at idealContactTime. Returns the flash text
- * shown right after (null if the ball never came) plus the flick's measured
- * timing for failure messages. Pass the previous returned `ideal` to keep
- * swinging at successive balls.
+ * shown once the contact resolves (null if the ball never came), whether the
+ * racket connected, and the flick's measured timing for failure messages.
  *
  * The flick runs inside the page, positioned by the page's own clock and
  * dispatched to the game's real pointermove listener. Driving it with
@@ -111,42 +110,44 @@ export async function swingAtNextBall(
   prevIdeal: number | null = null,
   dir = 1,
   upwardSlope = 0,
-): Promise<{ flash: string | null; ideal: number | null; timing: FlickTiming | null }> {
-  let ideal: number | null = null;
-  const t0 = Date.now();
-  while (Date.now() - t0 < 15_000) {
-    const s = await state(page);
-    if (
-      s.phase === 'rally' &&
-      s.idealContactTime !== null &&
-      s.idealContactTime > s.now &&
-      s.idealContactTime !== prevIdeal
-    ) {
-      ideal = s.idealContactTime;
-      break;
-    }
-    await page.waitForTimeout(12);
-  }
-  if (ideal === null) return { flash: null, ideal: null, timing: null };
-
+): Promise<{ flash: string | null; ideal: number | null; timing: FlickTiming | null; contact: boolean }> {
   // A 0.36-viewport flick over 80 ms (~4.5 widths/s, well past the 1.2
   // trigger) starting 60 ms before ideal: the detector trips ~30 ms in, which
   // lands inside the ±50 ms Perfect band.
   //
   // Frame-rate independent: on CI the software-rendered game runs at ~9 fps,
-  // so timers fire a whole ~110 ms frame late. Sleep only until SPIN_S before
-  // the flick, then busy-wait and dispatch synchronously so no frame can run
-  // in between. The game judges swings by event timestamp, and it consumes
-  // the swing before checking contact in its next frame, so briefly blocking
-  // the main thread doesn't change the outcome.
-  const timing = await page.evaluate(
-    async ({ ideal, dir, upwardSlope }) => {
+  // The renderer can stall past the intended start. These synthetic pointer
+  // samples keep their source timestamps even if the batch is delivered late,
+  // like coalesced motion. The real detector and contact still run in the game.
+  return page.evaluate(
+    async ({ prevIdeal, dir, upwardSlope }) => {
       const LEAD_S = 0.06;
       const DUR_S = 0.08;
-      const SPIN_S = 0.4;
+      const SPIN_S = 0.8;
       const nowS = () => performance.now() / 1000;
+      const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+      const read = () => (window as unknown as { __wt: { state(): WtState } }).__wt.state();
+      const deadline = nowS() + 15;
+      let ideal: number | null = null;
+      let rally = 0;
+      while (nowS() < deadline) {
+        const s = read();
+        if (
+          s.phase === 'rally' &&
+          s.idealContactTime !== null &&
+          s.idealContactTime > s.now + LEAD_S &&
+          s.idealContactTime !== prevIdeal
+        ) {
+          ideal = s.idealContactTime;
+          rally = s.rally;
+          break;
+        }
+        await nextFrame();
+      }
+      if (ideal === null) return { flash: null, ideal, timing: null, contact: false };
+
       const start = ideal - LEAD_S;
-      while (nowS() < start - SPIN_S) await new Promise((r) => setTimeout(r, 4));
+      while (nowS() < start - SPIN_S) await nextFrame();
       while (nowS() < start) { /* spin: a frame here would make the flick late */ }
       const t0 = performance.now();
       let events = 0;
@@ -157,28 +158,34 @@ export async function swingAtNextBall(
         if (now - lastDispatch >= 8 || k >= 1) {
           const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
           const y = innerHeight / 2 + upwardSlope * 0.36 * innerWidth * (0.5 - k);
-          window.dispatchEvent(
-            new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: y }),
-          );
+          const event = new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: y });
+          Object.defineProperty(event, 'timeStamp', { value: (start + k * DUR_S) * 1000 });
+          window.dispatchEvent(event);
           events++;
           lastDispatch = now;
         }
         if (k >= 1) break;
       }
-      return {
+      const timing = {
         startOffsetMs: Math.round(t0 - ideal * 1000),
         durationMs: Math.round(performance.now() - t0),
         events,
       };
+      const contactDeadline = nowS() + 15;
+      let s = read();
+      while (s.idealContactTime === ideal && s.rally === rally && nowS() < contactDeadline) {
+        await nextFrame();
+        s = read();
+      }
+      return {
+        flash: document.querySelector('#flash')?.textContent ?? null,
+        ideal,
+        timing,
+        contact: s.rally > rally,
+      };
     },
-    { ideal, dir, upwardSlope },
+    { prevIdeal, dir, upwardSlope },
   );
-  if (upwardSlope === 0) await page.waitForTimeout(400);
-  else await page.evaluate(() => new Promise<void>((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-  }));
-  const flash = await page.$eval('#flash', (e) => e.textContent).catch(() => null);
-  return { flash, ideal, timing };
 }
 
 /** Smoothed fps from the HUD counter, for failure diagnostics. */
