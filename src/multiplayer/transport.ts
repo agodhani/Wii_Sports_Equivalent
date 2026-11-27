@@ -1,10 +1,16 @@
 export type Role = 'host' | 'guest';
 export type ConnectionStatus = 'connecting' | 'waiting' | 'open' | 'lost';
+export type TransportPath = 'direct' | 'relayed';
 
 export interface Transport {
+  readonly path: TransportPath | null;
   send(message: unknown): void;
   close(): void;
 }
+
+const DIRECT_TIMEOUT_MS = 5000;
+const GAME_MESSAGE_BYTES = 4096;
+const SEND_BUFFER_BYTES = 65_536;
 
 interface TransportEvents {
   status(status: ConnectionStatus): void;
@@ -26,18 +32,19 @@ function rtcConfig(): RTCConfiguration {
 }
 
 export function openRoom(code: string, role: Role, events: TransportEvents): Transport {
-  if (typeof RTCPeerConnection === 'undefined') throw new Error('WebRTC unavailable');
   const token = crypto.randomUUID();
   const url = import.meta.env.VITE_SIGNAL_URL ||
     `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/tennis-signal`;
   let closed = false;
   let connected = false;
   let status: ConnectionStatus = 'connecting';
+  let path: TransportPath | null = null;
   let socket: WebSocket;
   let pc: RTCPeerConnection | null = null;
   let channel: RTCDataChannel | null = null;
   let retry = 0;
-  let restart = 0;
+  let directTimer = 0;
+  let relayPending = false;
   let round = 0;
   let queue = Promise.resolve();
   let candidates: RTCIceCandidateInit[] = [];
@@ -51,7 +58,7 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
   };
   const resetPeer = () => {
-    clearTimeout(restart);
+    clearTimeout(directTimer);
     const previous = pc;
     const data = channel;
     pc = null;
@@ -60,36 +67,43 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
     previous?.close();
   };
   const lost = () => {
+    path = null;
     setStatus(connected ? 'lost' : 'connecting');
   };
-  const requestRestart = () => {
+  const requestRelay = () => {
+    if (closed || relayPending || path === 'relayed' || !round) return;
+    relayPending = true;
+    resetPeer();
     lost();
-    if (closed) return;
-    clearTimeout(restart);
-    restart = window.setTimeout(() => signal({ type: 'restart', round }), 1000);
+    if (!closed) signal({ type: 'relay-request', round });
   };
-  const markOpen = () => {
-    clearTimeout(restart);
+  const markOpen = (next: TransportPath) => {
+    clearTimeout(directTimer);
+    path = next;
     connected = true;
     setStatus('open');
   };
+  const openRelay = () => {
+    if (path === 'relayed') return;
+    resetPeer();
+    lost();
+    if (!closed) markOpen('relayed');
+  };
+  const receiveGame = (data: unknown) => {
+    if (typeof data !== 'string' || data.length > GAME_MESSAGE_BYTES) return;
+    let message: unknown;
+    try { message = JSON.parse(data); } catch { return; }
+    events.message(message);
+  };
   const attachData = (data: RTCDataChannel) => {
     channel = data;
-    data.onopen = () => { if (channel === data) markOpen(); };
-    data.onclose = () => { if (channel === data && !closed) requestRestart(); };
+    data.onopen = () => { if (channel === data) markOpen('direct'); };
+    data.onclose = () => { if (channel === data) requestRelay(); };
     data.onmessage = (event) => {
-      if (channel !== data || status !== 'open' || typeof event.data !== 'string' ||
-          event.data.length > 4096) return;
-      let message: unknown;
-      try { message = JSON.parse(event.data); } catch { return; }
-      events.message(message);
+      if (channel === data && path === 'direct') receiveGame(event.data);
     };
   };
   const connectPeer = async (current: number) => {
-    resetPeer();
-    lost();
-    if (closed) return;
-    round = current;
     candidates = [];
     const peer = new RTCPeerConnection(rtcConfig());
     pc = peer;
@@ -101,13 +115,18 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
     };
     peer.onconnectionstatechange = () => {
       if (pc !== peer) return;
-      if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') requestRestart();
-      if (peer.connectionState === 'connected' && channel?.readyState === 'open') markOpen();
+      if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') requestRelay();
+      if (peer.connectionState === 'connected' && channel?.readyState === 'open') markOpen('direct');
+    };
+    peer.oniceconnectionstatechange = () => {
+      if (pc === peer && peer.iceConnectionState === 'failed') requestRelay();
     };
     peer.ondatachannel = ({ channel: data }) => { if (pc === peer) attachData(data); };
     if (role === 'host') {
       attachData(peer.createDataChannel('tennis'));
-      await peer.setLocalDescription(await peer.createOffer());
+      const offer = await peer.createOffer();
+      if (pc !== peer) return;
+      await peer.setLocalDescription(offer);
       send({ description: peer.localDescription });
     }
   };
@@ -119,9 +138,12 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
     if (!peer || !payload) return;
     if (payload.description) {
       await peer.setRemoteDescription(payload.description);
+      if (pc !== peer) return;
       for (const candidate of candidates.splice(0)) await peer.addIceCandidate(candidate);
       if (payload.description.type === 'offer' && pc === peer) {
-        await peer.setLocalDescription(await peer.createAnswer());
+        const answer = await peer.createAnswer();
+        if (pc !== peer) return;
+        await peer.setLocalDescription(answer);
         if (pc === peer) signal({ type: 'signal', round, payload: { description: peer.localDescription } });
       }
     } else if (payload.candidate) {
@@ -129,13 +151,18 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
       else candidates.push(payload.candidate);
     }
   };
+  const clearPair = () => {
+    round = 0;
+    relayPending = false;
+    resetPeer();
+  };
   const connectSocket = () => {
     const ws = new WebSocket(url);
     socket = ws;
     ws.onopen = () => signal({ type: 'join', code, role, token });
     ws.onclose = () => {
       if (closed) return;
-      resetPeer();
+      clearPair();
       lost();
       if (!closed) retry = window.setTimeout(connectSocket, 500);
     };
@@ -143,28 +170,50 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
       let m;
       try { m = JSON.parse(data); } catch { return; }
       if (!m || typeof m !== 'object') return;
-      queue = queue.then(async () => {
-        if (closed || ws !== socket) return;
-        if (m.type === 'error') events.error(String(m.reason));
-        if (ws.readyState !== WebSocket.OPEN) return;
-        if (m.type === 'joined' && !connected) setStatus('waiting');
-        if (m.type === 'away') { resetPeer(); lost(); }
-        if (m.type === 'pair') await connectPeer(m.round);
-        if (m.type === 'signal' && m.round === round) await receiveSignal(m.payload);
-      }).catch(() => { if (!closed && ws === socket) requestRestart(); });
+      if (closed || ws !== socket || ws.readyState !== WebSocket.OPEN) return;
+      if (m.type === 'error') events.error(String(m.reason));
+      else if (m.type === 'joined' && !connected) setStatus('waiting');
+      else if (m.type === 'away') { clearPair(); lost(); }
+      else if (m.type === 'pair') {
+        clearPair();
+        lost();
+        if (closed) return;
+        round = m.round;
+        if (m.relay) openRelay();
+        else {
+          const current = round;
+          directTimer = window.setTimeout(requestRelay, DIRECT_TIMEOUT_MS);
+          queue = connectPeer(current).catch(() => { if (round === current) requestRelay(); });
+        }
+      } else if (m.round === round && round) {
+        if (m.type === 'relay-open') openRelay();
+        else if (m.type === 'relay-data' && path === 'relayed') receiveGame(m.data);
+        else if (m.type === 'signal' && pc) {
+          const peer = pc;
+          queue = queue.then(() => { if (pc === peer) return receiveSignal(m.payload); })
+            .catch(() => { if (pc === peer) requestRelay(); });
+        }
+      }
     };
   };
   connectSocket();
   return {
+    get path() { return path; },
     send(message) {
-      if (status === 'open' && channel?.readyState === 'open' && channel.bufferedAmount < 65_536) {
-        channel.send(JSON.stringify(message));
+      if (status !== 'open') return;
+      const data = JSON.stringify(message);
+      if (data === undefined || data.length > GAME_MESSAGE_BYTES) return;
+      if (path === 'direct' && channel?.readyState === 'open' && channel.bufferedAmount < SEND_BUFFER_BYTES) {
+        channel.send(data);
+      } else if (path === 'relayed' && socket.bufferedAmount < SEND_BUFFER_BYTES) {
+        signal({ type: 'relay-data', round, data });
       }
     },
     close() {
       closed = true;
       clearTimeout(retry);
-      resetPeer();
+      clearPair();
+      path = null;
       socket.close();
     },
   };

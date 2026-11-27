@@ -6,7 +6,7 @@ import { openRoom } from '../src/multiplayer/transport';
 vi.mock('../src/multiplayer/transport', () => ({ openRoom: vi.fn() }));
 
 function guestSession() {
-  const transport = { send: vi.fn(), close: vi.fn() };
+  const transport = { path: null, send: vi.fn(), close: vi.fn() };
   const end = vi.fn();
   vi.mocked(openRoom).mockReturnValue(transport);
   const session = new SinglesSession('ABCDEF0123', 'guest', end);

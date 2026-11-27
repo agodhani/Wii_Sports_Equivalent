@@ -124,6 +124,7 @@ export class SinglesSession {
   }
 
   get snapshot() { return this.sync.snapshot; }
+  get path() { return this.transport.path; }
 
   private updateContact(contact: Snapshot['contact']): void {
     if (!contact) return;

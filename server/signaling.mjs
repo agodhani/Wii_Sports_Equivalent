@@ -3,6 +3,9 @@ import { WebSocketServer } from 'ws';
 const RESERVE_MS = 10_000;
 const MAX_ROOMS = 128;
 const ROOM_LIFETIME_MS = 2 * 60 * 60 * 1000;
+const RELAY_MESSAGES_PER_SECOND = 60;
+const RELAY_MESSAGE_BYTES = 4096;
+const RELAY_BUFFER_BYTES = 65_536;
 
 export function attachSignaling(server, { maxRooms = MAX_ROOMS, roomLifetimeMs = ROOM_LIFETIME_MS } = {}) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16_384 });
@@ -24,7 +27,7 @@ export function attachSignaling(server, { maxRooms = MAX_ROOMS, roomLifetimeMs =
   };
   const pair = (room) => {
     if (!room.host?.socket || !room.guest?.socket) return;
-    const message = { type: 'pair', round: ++room.round };
+    const message = { type: 'pair', round: ++room.round, relay: room.relay === true };
     send(room.host.socket, message);
     send(room.guest.socket, message);
   };
@@ -89,11 +92,25 @@ export function attachSignaling(server, { maxRooms = MAX_ROOMS, roomLifetimeMs =
         pair(room);
         return;
       }
-      if (slot.socket !== socket) return;
-      if (m.type === 'restart' && m.round === room.round) {
-        pair(room);
-      } else if (m.type === 'signal' && m.round === room.round) {
-        send(room[peer]?.socket, { type: 'signal', round: m.round, payload: m.payload });
+      const other = room[peer]?.socket;
+      if (slot.socket !== socket || !other || m.round !== room.round) return;
+      if (m.type === 'relay-request' && !room.relay) {
+        room.relay = true;
+        const message = { type: 'relay-open', round: room.round };
+        send(socket, message);
+        send(other, message);
+      } else if (m.type === 'signal' && !room.relay) {
+        send(other, { type: 'signal', round: m.round, payload: m.payload });
+      } else if (m.type === 'relay-data' && room.relay && typeof m.data === 'string' &&
+                 Buffer.byteLength(m.data) <= RELAY_MESSAGE_BYTES && other.bufferedAmount < RELAY_BUFFER_BYTES) {
+        const now = performance.now();
+        const tokens = Math.min(RELAY_MESSAGES_PER_SECOND, (slot.relayTokens ?? RELAY_MESSAGES_PER_SECOND) +
+          (now - (slot.relayAt ?? now)) / 1000 * RELAY_MESSAGES_PER_SECOND);
+        slot.relayAt = now;
+        slot.relayTokens = tokens;
+        if (tokens < 1) return;
+        slot.relayTokens--;
+        send(other, { type: 'relay-data', round: m.round, data: m.data });
       }
     });
     socket.on('close', () => {

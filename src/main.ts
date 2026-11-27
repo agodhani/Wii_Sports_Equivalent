@@ -247,7 +247,7 @@ async function main() {
     try {
       online = new SinglesSession(code, role, finishOnline);
     } catch {
-      hud.toast('Multiplayer needs a secure connection and a browser with WebRTC.');
+      hud.toast('Multiplayer needs a secure connection and a browser with WebSocket support.');
       return;
     }
     onlineLobby = true;
@@ -280,6 +280,7 @@ async function main() {
   }
 
   function stepOnline(room: SinglesSession, now: number, dt: number, frame: PoseFrame | null, lost: boolean) {
+    hud.setOnlinePath(room.path);
     const ready = match.phase === 'serving' && !lost;
     const swing = !ready ? null : inputMode === 'pointer' ? pendingPointerSwing :
       frame && detector ? detector.update(frame) : null;
@@ -959,6 +960,7 @@ async function main() {
         reportOpen,
         onlineRole: online?.role ?? null,
         onlineStatus: online?.status ?? null,
+        onlinePath: online?.path ?? null,
         shot: online?.snapshot?.contact?.id ?? null,
       }),
     };

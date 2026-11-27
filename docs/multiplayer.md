@@ -26,11 +26,18 @@ to the home screen. Reloading or closing either tab does not preserve a match.
   configure `VITE_TURN_URL` (comma-separated TURN URLs), `VITE_TURN_USERNAME`,
   and `VITE_TURN_CREDENTIAL`. These Vite values are included in the client
   build: use browser-safe, restricted credentials, never a TURN admin secret.
-  Rebuild after changing `VITE_*` settings. Some networks will not connect
-  without TURN.
+  Rebuild after changing `VITE_*` settings. TURN is optional.
 
-The WebSocket server only matches the two room members and relays WebRTC setup.
+The WebSocket server matches the two room members and relays WebRTC setup.
+If the data channel fails or cannot open within five seconds, the room switches
+to relaying gameplay over the signaling WebSocket, including after reconnects.
+The game labels the connection **Direct** (WebRTC, including optional TURN) or
+**Relayed** (signaling WebSocket). The host still owns ball physics, scoring,
+and phase changes, and camera data is never sent.
+
 Each instance holds up to 128 two-player rooms. Rooms expire two hours after
-creation, even if both players are still connected.
-After connection, swing inputs and match snapshots travel over the peer data
-channel; the host owns ball physics, scoring, and phase changes.
+creation, even if both players are still connected. The relay accepts up to
+4 KiB per message and 60 messages per second per player (120 per room), with a
+60-message burst per player. Messages over the limits or sent to a backed-up
+connection are dropped. Serve the app and signaling over HTTPS/WSS for remote
+play.

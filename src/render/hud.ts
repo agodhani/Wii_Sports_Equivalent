@@ -122,6 +122,8 @@ export class Hud {
       </section>
       <button id="online-leave" type="button" style="display:none;position:fixed;top:16px;left:16px;
         padding:8px 12px;border:0;border-radius:8px;cursor:pointer">Leave room</button>
+      <span id="online-path" hidden style="position:fixed;top:52px;left:16px;color:#fff;
+        font:12px system-ui,sans-serif;text-shadow:0 1px 3px #000;pointer-events:none"></span>
       <canvas id="preview" width="160" height="120" style="position:fixed;right:16px;
         bottom:16px;border:2px solid rgba(255,255,255,.5);border-radius:8px;
         display:none"></canvas>
@@ -296,6 +298,13 @@ export class Hud {
     this.root.querySelector('#online-status')!.textContent = text;
   }
 
+  setOnlinePath(path: 'direct' | 'relayed' | null): void {
+    const label = this.root.querySelector<HTMLElement>('#online-path')!;
+    const text = path === 'direct' ? 'Direct connection' : path === 'relayed' ? 'Relayed connection' : '';
+    if (label.textContent !== text) label.textContent = text;
+    label.hidden = !path;
+  }
+
   hideOnlineLobby(): void {
     (this.root.querySelector('#online-lobby') as HTMLElement).style.display = 'none';
     (this.root.querySelector('#online-leave') as HTMLButtonElement).style.display = 'block';
@@ -310,6 +319,7 @@ export class Hud {
   closeOnlineLobby(): void {
     (this.root.querySelector('#online-lobby') as HTMLElement).style.display = 'none';
     (this.root.querySelector('#online-leave') as HTMLButtonElement).style.display = 'none';
+    this.setOnlinePath(null);
   }
 
   hidePreview(): void {
