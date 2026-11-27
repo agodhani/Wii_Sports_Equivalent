@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type { Vec3 } from '../types';
 import type { CuePhase } from '../game/timing';
 import { buildWorld, type Crowd } from './world';
-import { createAvatar } from './avatar';
+import { createAvatar, type TennisAvatar } from './avatar';
+import { createRacketHead } from './racket';
 import { fitCamera } from './framing';
 
 // Blob shadow under the ball: a depth cue for the player's camera without
@@ -30,15 +31,15 @@ export class Scene {
   private camera: THREE.PerspectiveCamera;
   private ball: THREE.Mesh;
   private ballShadow: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
-  private player: THREE.Group;
-  private cpu: THREE.Group;
+  private player: TennisAvatar;
+  private cpu: TennisAvatar;
   private cpuPivot: THREE.Group | null = null;
   private cpuSwingT: number | null = null; // seconds into the CPU's swing, null = at rest
   private crowd: Crowd;
   private upperArm: THREE.Mesh;
   private forearm: THREE.Mesh;
   private racketHandle: THREE.Mesh;
-  private racketHead: THREE.Mesh;
+  private racketHead: THREE.Group;
   private arm: THREE.Group;
   // Screen shake: the camera renders at cameraBase + a random offset scaled by
   // trauma², so a hit jolts the frame without fighting the attract-mode orbit.
@@ -92,6 +93,7 @@ export class Scene {
       hair: 0x1c1c22,
       facing: 1,
       racket: true,
+      style: 'cropped',
     });
     this.cpu.position.set(0, 0, -11);
     this.cpuPivot = this.cpu.userData.swingPivot ?? null;
@@ -113,11 +115,7 @@ export class Scene {
       new THREE.MeshLambertMaterial({ color: 0x2b2b2b }),
     );
     this.racketHandle.geometry.translate(0, 0.5, 0);
-    this.racketHead = new THREE.Mesh(
-      new THREE.TorusGeometry(0.17, 0.028, 8, 20),
-      new THREE.MeshLambertMaterial({ color: 0xe8452f }),
-    );
-    this.racketHead.scale.set(1, 1.25, 1); // oval, long side along the forearm
+    this.racketHead = createRacketHead();
     this.arm = new THREE.Group();
     this.arm.add(this.upperArm, this.forearm, this.racketHandle, this.racketHead);
     this.arm.visible = false;
@@ -182,6 +180,7 @@ export class Scene {
    */
   setArm(shoulder: Vec3, elbow: Vec3, wrist: Vec3): void {
     this.arm.visible = true;
+    this.player.setTrackedArm(shoulder.x >= this.player.position.x ? 1 : -1);
     const s = new THREE.Vector3(shoulder.x, shoulder.y, shoulder.z);
     const e = new THREE.Vector3(elbow.x, elbow.y, elbow.z);
     const w = new THREE.Vector3(wrist.x, wrist.y, wrist.z);
@@ -201,7 +200,10 @@ export class Scene {
     this.racketHead.rotation.set(0, 0, Math.atan2(forearmDir.y, forearmDir.x) - Math.PI / 2);
   }
 
-  setArmVisible(v: boolean): void { this.arm.visible = v; }
+  setArmVisible(v: boolean): void {
+    this.arm.visible = v;
+    if (!v) this.player.setTrackedArm(null);
+  }
 
   /**
    * Attract-mode camera: pass a time to orbit slowly around the court behind
@@ -328,6 +330,8 @@ export class Scene {
    * Driven with the unclamped frame dt so juice keeps playing during hit-stop.
    */
   update(dt: number): void {
+    this.player.animate(dt);
+    this.cpu.animate(dt);
     if (this.cuePop) {
       this.cuePop.t += dt;
       const k = Math.min(1, this.cuePop.t / CUE_POP_S);
@@ -409,6 +413,17 @@ export class Scene {
   }
   setPlayerX(x: number): void { this.player.position.x = x; }
   setCpuX(x: number): void { this.cpu.position.x = x; }
+
+  /** Read-only renderer state for the DEV play-test hook. */
+  characterState() {
+    const snapshot = (avatar: TennisAvatar) => ({
+      x: avatar.position.x,
+      stride: avatar.getObjectByName('right-leg')!.rotation.x,
+      rightArmVisible: avatar.getObjectByName('right-arm')!.visible,
+      leftArmVisible: avatar.getObjectByName('left-arm')!.visible,
+    });
+    return { player: snapshot(this.player), cpu: snapshot(this.cpu), trackedArmVisible: this.arm.visible };
+  }
 
   resize(): void {
     const w = window.innerWidth, h = window.innerHeight;

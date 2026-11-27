@@ -18,7 +18,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['github'], ['list']] : [['list']],
   use: {
     viewport: { width: 1280, height: 800 },
-    launchOptions: { args: ['--use-gl=angle', '--enable-unsafe-swiftshader'] },
+    launchOptions: { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
