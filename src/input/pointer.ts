@@ -26,8 +26,15 @@ const WINDOW_S = 0.08;              // measurement window
 const MIN_WINDOW_S = 0.03;          // need at least this much span to measure
 const RESET_SPEED = 0.4;
 const COOLDOWN_S = 0.25;
+const POINTER_POWER_RANGE = 2.5;
+const MIN_SWING_SPEED = 4;
+const SWING_SPEED_RANGE = 8;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+export function pointerStrengthForSwingSpeed(speed: number): number {
+  return POINTER_TRIGGER + POINTER_POWER_RANGE * (speed - MIN_SWING_SPEED) / SWING_SPEED_RANGE;
+}
 
 export class PointerSwingDetector {
   private state: 'idle' | 'cooldown' = 'idle';
@@ -70,7 +77,7 @@ export class PointerSwingDetector {
         side: 'forehand', // placeholder — caller picks forehand/backhand
         // Map pointer speed onto the shoulder-widths/sec range resolveHit's
         // power curve expects: trigger threshold → 4, ~3.7 widths/s → 12.
-        speed: 4 + 8 * clamp((horizontal - POINTER_TRIGGER) / 2.5, 0, 1),
+        speed: MIN_SWING_SPEED + SWING_SPEED_RANGE * clamp((horizontal - POINTER_TRIGGER) / POINTER_POWER_RANGE, 0, 1),
         direction: clamp(vx / 4, -1, 1), // + = screen right = court +x
         timestamp: s.t,
       };

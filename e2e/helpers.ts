@@ -3,6 +3,7 @@ import { test as base, expect, type Page } from '@playwright/test';
 export const BASE = 'http://localhost:5299';
 export const GL_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 export const RECORDS_KEY = 'webcam-tennis:records:v1';
+export const WEAK_SERVE_DISTANCE = 0.107;
 
 export interface WtState {
   phase: string;
@@ -11,6 +12,11 @@ export interface WtState {
   difficulty: string;
   playerScore: number;
   cpuScore: number;
+  playerGames: number;
+  cpuGames: number;
+  server: 'player' | 'cpu';
+  serveAttempt: 1 | 2;
+  serveReady: boolean;
   inputMode: string | null;
   rally: number;
   demoZ: number | null;
@@ -128,6 +134,13 @@ export async function swingAtNextBall(
   }
   if (ideal === null) return { flash: null, ideal: null, timing: null };
 
+  const timing = await flick(page, dir, ideal);
+  await page.waitForTimeout(400);
+  const flash = await page.$eval('#flash', (e) => e.textContent).catch(() => null);
+  return { flash, ideal, timing };
+}
+
+async function flick(page: Page, dir: number, ideal: number | null = null, distance = 0.36): Promise<FlickTiming> {
   // A 0.36-viewport flick over 80 ms (~4.5 widths/s, well past the 1.2
   // trigger) starting 60 ms before ideal: the detector trips ~30 ms in, which
   // lands inside the ±50 ms Perfect band.
@@ -138,13 +151,13 @@ export async function swingAtNextBall(
   // in between. The game judges swings by event timestamp, and it consumes
   // the swing before checking contact in its next frame, so briefly blocking
   // the main thread doesn't change the outcome.
-  const timing = await page.evaluate(
-    async ({ ideal, dir }) => {
+  return page.evaluate(
+    async ({ ideal, dir, distance }) => {
       const LEAD_S = 0.06;
       const DUR_S = 0.08;
       const SPIN_S = 0.4;
       const nowS = () => performance.now() / 1000;
-      const start = ideal - LEAD_S;
+      const start = ideal === null ? nowS() : ideal - LEAD_S;
       while (nowS() < start - SPIN_S) await new Promise((r) => setTimeout(r, 4));
       while (nowS() < start) { /* spin: a frame here would make the flick late */ }
       const t0 = performance.now();
@@ -154,7 +167,7 @@ export async function swingAtNextBall(
         const now = performance.now();
         const k = Math.min(1, (now - t0) / 1000 / DUR_S);
         if (now - lastDispatch >= 8 || k >= 1) {
-          const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
+          const fx = 0.5 + dir * distance * (k - 0.5);
           window.dispatchEvent(
             new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: innerHeight / 2 }),
           );
@@ -164,25 +177,40 @@ export async function swingAtNextBall(
         if (k >= 1) break;
       }
       return {
-        startOffsetMs: Math.round(t0 - ideal * 1000),
+        startOffsetMs: ideal === null ? 0 : Math.round(t0 - ideal * 1000),
         durationMs: Math.round(performance.now() - t0),
         events,
       };
     },
-    { ideal, dir },
+    { ideal, dir, distance },
   );
-  await page.waitForTimeout(400);
-  const flash = await page.$eval('#flash', (e) => e.textContent).catch(() => null);
-  return { flash, ideal, timing };
 }
 
 /** Smoothed fps from the HUD counter, for failure diagnostics. */
 export const hudFps = (page: Page): Promise<string | null> =>
   page.$eval('#fps', (e) => e.textContent).catch(() => null);
 
-/** Stop interacting entirely and wait for the CPU to win on unanswered serves. */
-export async function loseMatch(page: Page, timeout = 90_000): Promise<void> {
-  await waitForPhase(page, 'gameover', timeout);
+/** Flick through the real pointer input; aim into the box unless testing a fault. */
+export async function swingServe(page: Page, fault = false, distance?: number): Promise<void> {
+  const s = await state(page);
+  const target = (s.playerScore + s.cpuScore) % 2 === 0 ? -1 : 1;
+  await flick(page, fault ? -target : target, null, distance);
+  await page.waitForFunction(() => !(window as unknown as { __wt: { state(): WtState } }).__wt.state().serveReady);
+}
+
+/** Ignore CPU serves and fault intentionally on both attempts at player serves. */
+export async function loseMatch(page: Page, finishIntoNet = false): Promise<void> {
+  for (;;) {
+    await page.waitForFunction(() => {
+      const { phase, serveReady } = (window as unknown as { __wt: { state(): WtState } }).__wt.state();
+      return phase === 'gameover' || serveReady;
+    }, undefined, { timeout: 30_000, polling: 100 });
+    const s = await state(page);
+    if (s.phase === 'gameover') return;
+    const matchPoint = s.cpuGames === 5 && s.playerGames < 5 && s.cpuScore >= 3 && s.cpuScore > s.playerScore;
+    if (finishIntoNet && matchPoint && s.serveAttempt === 2) await swingServe(page, false, WEAK_SERVE_DISTANCE);
+    else await swingServe(page, true);
+  }
 }
 
 export const isShown = (page: Page, sel: string): Promise<boolean> =>

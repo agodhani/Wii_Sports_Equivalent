@@ -5,6 +5,7 @@ test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
 const HIT_FLASHES = ['Perfect!', 'Early!', 'Late!'];
 
 test('match end → report → share → rematch → records survive reload', async ({ page }) => {
+  test.setTimeout(180_000);
   await openGame(page);
   await page.click('#home-pointer');
   await waitForPhase(page, 'rally');
@@ -21,11 +22,11 @@ test('match end → report → share → rematch → records survive reload', as
   }
   expect(hits, `attempts: ${attempts.join(' | ')}`).toBeGreaterThanOrEqual(1);
 
-  await loseMatch(page);
+  await loseMatch(page, true);
   await expect(page.locator('#report')).toBeVisible();
 
   // leftovers cleaned: flash cleared, hint + meter hidden, ball gone.
-  // Immediate read, not a retrying toHaveCSS — the last flash ('Miss!') fired
+  // Immediate read, not a retrying toHaveCSS — the last flash fired
   // milliseconds before the report and auto-hides after 700 ms, so only an
   // instant check can tell clearFlash() ran rather than the flash's own timer.
   expect(await page.$eval('#flash', (e) => e.style.opacity)).toBe('0');
@@ -34,11 +35,12 @@ test('match end → report → share → rematch → records survive reload', as
 
   // A returned ball can win a point (CPU miss or out), so the player's score is
   // random — read it from game state rather than assuming 0.
-  const { playerScore, cpuScore } = await state(page);
-  expect(cpuScore).toBe(7);
+  const { playerGames, cpuGames } = await state(page);
+  expect(cpuGames).toBe(6);
   const card = page.locator('#report-card');
   await expect(card).toContainText('CPU wins');
-  await expect(card).toContainText(`${playerScore} — 7`);
+  await expect(card).toContainText('Double fault — into the net. Swing faster.');
+  await expect(card).toContainText(`${playerGames} — 6`);
   await expect(card).toContainText('vs Hard CPU');
   await expect(card).toContainText('Perfect hits');
   await expect(card).toContainText('Longest rally');
@@ -56,20 +58,20 @@ test('match end → report → share → rematch → records survive reload', as
   // share → clipboard gets a valid challenge URL + toast
   await page.click('#report-share');
   await page.waitForFunction(
-    () => navigator.clipboard.readText().then((t) => t.includes('challenge=1')),
+    () => navigator.clipboard.readText().then((t) => t.includes('challenge=2')),
     undefined,
     { timeout: 10_000, polling: 200 },
   );
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   expect(clip).toMatch(
-    new RegExp(`https?://\\S+\\?challenge=1&cpu=hard&you=${playerScore}&them=7&rally=\\d+`),
+    new RegExp(`https?://\\S+\\?challenge=2&cpu=hard&you=${playerGames}&them=6&rally=\\d+`),
   );
   await expect(page.locator('#toast')).toHaveText('Challenge link copied!');
 
   // Space → rematch: report closes, fresh score, match running
   await page.keyboard.press('Space');
   await expect(page.locator('#report')).toBeHidden();
-  await expect(page.locator('#score')).toHaveText('0 — 0');
+  await expect(page.locator('#score-points')).toHaveText('0 — 0');
   await page.waitForFunction(
     () => ['serving', 'rally'].includes((window as unknown as { __wt: { state(): { phase: string } } }).__wt.state().phase),
     undefined,

@@ -1,4 +1,4 @@
-import { test, expect, openGame, state, waitForPhase, swingAtNextBall, isShown, hudFps } from './helpers';
+import { test, expect, openGame, state, waitForPhase, swingAtNextBall, swingServe, isShown, hudFps, WEAK_SERVE_DISTANCE } from './helpers';
 
 const HIT_FLASHES = ['Perfect!', 'Early!', 'Late!'];
 
@@ -8,7 +8,7 @@ test('pointer mode: match starts, swings register, misses score for CPU', async 
 
   // score + hint visible immediately, serve becomes a live rally
   expect(await isShown(page, '#score')).toBe(true);
-  await expect(page.locator('#score')).toHaveText('0 — 0');
+  await expect(page.locator('#score-points')).toHaveText('0 — 0');
   expect(await isShown(page, '#hint')).toBe(true);
   await waitForPhase(page, 'rally');
   expect((await state(page)).inputMode).toBe('pointer');
@@ -64,4 +64,126 @@ test('idle ball flashes Miss! and scores for the CPU', async ({ page }) => {
   );
   await expect(page.locator('#flash')).toHaveText('Miss!');
   expect((await state(page)).cpuScore).toBe(cpuBefore + 1);
+});
+
+test('player swings to serve, gets two attempts, and changes court after a double fault', async ({ page }) => {
+  await openGame(page);
+  await page.click('#home-pointer');
+  const waitForServe = () => expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
+  const points = page.locator('#score-points');
+  const serve = page.locator('#score-serve');
+  const flash = page.locator('#flash');
+  await expect(serve).toContainText('CPU serves');
+  await waitForServe();
+  await expect(page.locator('#score-games')).toContainText('You 0 — 1 CPU');
+  await expect(serve).toHaveText('You serve · Deuce court · First serve');
+  await expect(page.locator('#hint')).toHaveText('Swipe left to serve');
+
+  await serve.evaluate((el) => {
+    const observer = new MutationObserver(() => {
+      if (!el.textContent?.includes('Second serve')) return;
+      const hint = document.querySelector('#hint')!;
+      el.dataset.retryHintVisible = String(getComputedStyle(hint).display !== 'none');
+      observer.disconnect();
+    });
+    observer.observe(el, { childList: true });
+  });
+  await swingServe(page, true);
+  await expect(flash).toHaveText('Fault');
+  await expect(points).toHaveText('0 — 0');
+  await expect(serve).toHaveText('You serve · Deuce court · Second serve');
+  await expect(serve).toHaveAttribute('data-retry-hint-visible', 'false');
+  await waitForServe();
+  await expect(page.locator('#hint')).toBeVisible();
+  await swingServe(page, true);
+  await expect(flash).toHaveText('Double fault');
+  await expect(points).toHaveText('0 — 15');
+  await expect(serve).toHaveText('You serve · Ad court · First serve');
+  await expect(page.locator('#hint')).toHaveText('Swipe right to serve');
+
+  await swingServe(page);
+  await waitForPhase(page, 'rally');
+  expect((await state(page)).idealContactTime).toBeNull(); // ball is heading to the CPU
+});
+
+test('a weak serve into the net tells the player to swing faster', async ({ page }) => {
+  await openGame(page);
+  await page.click('#home-pointer');
+  await expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
+  const fill = page.locator('#meter-fill');
+  const captureServeColor = () => fill.evaluate((el: HTMLElement) => {
+    const { state } = (window as unknown as {
+      __wt: { state(): { phase: string; server: string } };
+    }).__wt;
+    delete el.dataset.swingColor;
+    const observer = new MutationObserver(() => {
+      const { phase, server } = state();
+      if (phase !== 'serving' || server !== 'player') {
+        observer.disconnect();
+      } else if (Number.parseFloat(el.style.width) > 0) {
+        el.dataset.swingColor = el.style.backgroundColor;
+        observer.disconnect();
+      }
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['style'] });
+  });
+  await captureServeColor();
+  await swingServe(page, false, WEAK_SERVE_DISTANCE);
+  await expect(page.locator('#flash')).toHaveText('Fault — into the net. Swing faster.');
+  await expect(fill).toHaveAttribute('data-swing-color', 'rgb(255, 225, 77)');
+
+  await expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
+  await captureServeColor();
+  await swingServe(page, true);
+  await expect(page.locator('#flash')).toHaveText('Double fault');
+  await expect(fill).toHaveAttribute('data-swing-color', 'rgb(92, 230, 92)');
+});
+
+test('a swipe during the retry delay does not block the swipe at the prompt', async ({ page }) => {
+  await openGame(page);
+  await page.click('#home-pointer');
+  await expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
+
+  const hint = page.locator('#hint');
+  await hint.evaluate((el) => {
+    const { state } = (window as unknown as {
+      __wt: { state(): { serveAt: number; serveReady: boolean } };
+    }).__wt;
+    const score = document.querySelector('#score-serve')!;
+    const flick = (direction: number, start: number) => {
+      let last = -Infinity;
+      while (performance.now() < start) { /* time the gesture against the retry deadline */ }
+      for (;;) {
+        const now = performance.now();
+        const progress = Math.min(1, (now - start) / 60);
+        if (now - last >= 6 || progress === 1) {
+          window.dispatchEvent(new PointerEvent('pointermove', {
+            clientX: (0.5 + 0.36 * direction * (progress - 0.5)) * innerWidth,
+            clientY: innerHeight / 2,
+          }));
+          last = now;
+        }
+        if (progress === 1) break;
+      }
+    };
+    const prompt = new MutationObserver(() => {
+      if (!state().serveReady || !el.textContent?.includes('Swipe left')) return;
+      prompt.disconnect();
+      flick(-1, performance.now());
+    });
+    const fault = new MutationObserver(() => {
+      if (!score.textContent?.includes('Second serve')) return;
+      fault.disconnect();
+      prompt.observe(el, { childList: true, attributes: true });
+      const retryAt = state().serveAt * 1000;
+      el.dataset.earlySwipeReady = String(state().serveReady);
+      flick(1, retryAt - 60);
+    });
+    fault.observe(score, { childList: true });
+  });
+
+  await swingServe(page, true);
+  await expect(hint).toHaveAttribute('data-early-swipe-ready', 'false');
+  await waitForPhase(page, 'rally', 10_000);
+  expect((await state(page)).idealContactTime).toBeNull();
 });

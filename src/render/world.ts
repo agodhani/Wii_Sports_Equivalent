@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { COURT_HALF_W, SERVICE_Z } from '../game/serve';
 
 /**
  * The static stadium: sky, lighting, grass, court + lines, net, stands and the
@@ -7,9 +8,7 @@ import * as THREE from 'three';
  * Scene constructor; the only living part is the crowd (cheer/idle sway).
  */
 
-const COURT_HALF_W = 4.11;
 const COURT_HALF_L = 11.9;
-const SERVICE_Z = 6.4;
 
 export interface Crowd {
   /** Spectators jump for ~1.6s; intensity scales the hop height. */
