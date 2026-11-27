@@ -48,7 +48,7 @@ export class SinglesSession {
   private clockOffset = 0;
   private bestRtt = Infinity;
   private contactId = 0;
-  private contactAt = 0;
+  private shotClockOffset = 0;
   localContactAt = 0;
 
   constructor(code: string, public readonly role: Role, private end: (reason: string) => void) {
@@ -109,8 +109,10 @@ export class SinglesSession {
         this.transport.send({ type: 'pong', sent: v.sent, at: now });
       }
     } else if (v.type === 'state') {
-      if (this.sync.accept(v.state) && this.bestRtt === Infinity) {
-        this.clockOffset = this.sync.snapshot!.at - now;
+      if (this.sync.accept(v.state)) {
+        const state = this.sync.snapshot!;
+        if (this.bestRtt === Infinity) this.clockOffset = state.at - now;
+        this.updateContact(state.contact);
       }
     } else if (v.type === 'pong' && finite(v.sent) && finite(v.at)) {
       const rtt = now - v.sent;
@@ -124,11 +126,12 @@ export class SinglesSession {
   get snapshot() { return this.sync.snapshot; }
 
   private updateContact(contact: Snapshot['contact']): void {
-    if (contact?.receiver === this.role && (contact.id !== this.contactId || contact.at !== this.contactAt)) {
+    if (!contact) return;
+    if (contact.id !== this.contactId) {
       this.contactId = contact.id;
-      this.contactAt = contact.at;
-      this.localContactAt = contact.at - this.clockOffset;
+      this.shotClockOffset = this.clockOffset;
     }
+    if (contact.receiver === this.role) this.localContactAt = contact.at - this.shotClockOffset;
   }
 
   tick(now: number, ready: boolean, hand: Handedness, swing: SwingEvent | null, autoSide: boolean): Snapshot | null {
@@ -146,7 +149,6 @@ export class SinglesSession {
 
     const previous = this.snapshot;
     const contact = previous?.contact;
-    this.updateContact(contact ?? null);
     if (ready && swing && previous && !previous.paused && contact?.receiver === this.role && this.status === 'open') {
       const input = swingInput(autoSide ? { ...swing, side: contact.side } : swing, contact, this.localContactAt);
       if (this.engine) this.engine.submit('host', input, now);
@@ -166,7 +168,7 @@ export class SinglesSession {
     return this.snapshot;
   }
 
-  hostTime(local: number): number { return local + this.clockOffset; }
+  hostTime(local: number): number { return local + this.shotClockOffset; }
 
   close(): void {
     clearTimeout(this.timer);

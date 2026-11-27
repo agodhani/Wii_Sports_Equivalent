@@ -40,3 +40,34 @@ it('keeps the final score available after the other player disconnects', () => {
   expect(end).not.toHaveBeenCalled();
   expect(session.snapshot).toEqual(result);
 });
+
+it('uses the same clock offset for drawing and submitting a shot despite later samples', () => {
+  let now = 0;
+  const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+  const { session, events, transport } = guestSession();
+  const shot: NonNullable<Snapshot['contact']> = {
+    id: 1, receiver: 'guest', at: 5, side: 'forehand', pos: { x: 0, y: 1, z: -9.8 },
+  };
+  const snapshot: Snapshot = {
+    seq: 1, at: 4, phase: 'rally', paused: false, scores: { host: 0, guest: 0 },
+    ball: null, contact: shot, rally: 0, winner: null,
+  };
+  events.message({ type: 'state', state: snapshot });
+  expect(session.localContactAt).toBeCloseTo(1);
+  expect(session.hostTime(1)).toBeCloseTo(5);
+
+  now = 100;
+  events.message({ type: 'pong', sent: 0, at: 4.25 });
+  events.message({ type: 'state', state: { ...snapshot, seq: 2, contact: { ...shot, at: 5.5 } } });
+  expect(session.localContactAt).toBeCloseTo(1.5);
+  expect(session.hostTime(1.5)).toBeCloseTo(5.5);
+  session.tick(1.5, true, 'right', { side: 'forehand', speed: 5, direction: 0, timestamp: 1.5 }, false);
+  expect(transport.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'swing', shot: 1, offset: 0 }));
+
+  events.message({ type: 'state', state: { ...snapshot, seq: 3, contact: { ...shot, id: 2, receiver: 'host' } } });
+  expect(session.hostTime(1)).toBeCloseTo(5.2);
+  events.message({ type: 'state', state: { ...snapshot, seq: 4, contact: { ...shot, id: 3 } } });
+  expect(session.localContactAt).toBeCloseTo(0.8);
+  session.close();
+  clock.mockRestore();
+});
