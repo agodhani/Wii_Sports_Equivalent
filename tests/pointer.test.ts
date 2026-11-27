@@ -107,6 +107,16 @@ describe('PointerSwingDetector', () => {
     expect(swipe).toMatchObject([{ event: { shotType: 'slice' } }]);
   });
 
+  it('includes touchdown in the motion window for a quick touch swipe', () => {
+    const d = new PointerSwingDetector();
+    d.beginContact({ t: 0, x: 0.2, y: 0.5 });
+    d.reset();
+    d.beginContact({ t: 0.1, x: 0.2, y: 0.5 });
+
+    expect(d.update({ t: 0.12, x: 0.35, y: 0.5 })).toBeNull();
+    expect(d.update({ t: 0.14, x: 0.5, y: 0.5 })).toMatchObject({ shotType: 'flat' });
+  });
+
   it('merges back-to-back flicks into one event, fires again after a hold', () => {
     const d = new PointerSwingDetector();
     expect(feed(d, 0, 0.1, horizontal(0.3, 0.6))).toHaveLength(1);

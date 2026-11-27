@@ -47,6 +47,11 @@ export class PointerSwingDetector {
     this.strength = 0;
   }
 
+  beginContact(s: PointerSample): void {
+    this.reset();
+    this.history.push(s);
+  }
+
   update(s: PointerSample): SwingEvent | null {
     const previous = this.history[this.history.length - 1];
     let sparseStart: PointerSample | undefined;

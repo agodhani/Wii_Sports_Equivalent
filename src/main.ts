@@ -213,9 +213,19 @@ async function main() {
     hud.setHint(SHOT_HINT);
   }
 
+  function pointerSample(e: PointerEvent) {
+    return {
+      t: e.timeStamp / 1000, // same clock as performance.now()
+      x: e.clientX / window.innerWidth,
+      y: e.clientY / window.innerWidth,
+    };
+  }
+
   for (const type of ['pointerdown', 'pointerup', 'pointercancel'] as const) {
     window.addEventListener(type, (e) => {
-      if (inputMode === 'pointer' && e.pointerType === 'touch') pointerDetector.reset();
+      if (inputMode !== 'pointer' || e.pointerType !== 'touch') return;
+      if (type === 'pointerdown') pointerDetector.beginContact(pointerSample(e));
+      else pointerDetector.reset();
     });
   }
 
@@ -225,15 +235,12 @@ async function main() {
     // the difference between a 120 Hz and a 60 Hz swing measurement.
     const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const ev of events.length ? events : [e]) {
+      const sample = pointerSample(ev);
       pointerPos = {
-        x: ev.clientX / window.innerWidth,
+        x: sample.x,
         y: ev.clientY / window.innerHeight,
       };
-      const swing = pointerDetector.update({
-        t: ev.timeStamp / 1000, // same clock as performance.now()
-        x: pointerPos.x,
-        y: ev.clientY / window.innerWidth,
-      });
+      const swing = pointerDetector.update(sample);
       if (swing) pendingPointerSwing = swing;
     }
   });
