@@ -110,6 +110,7 @@ export async function swingAtNextBall(
   prevIdeal: number | null = null,
   dir = 1,
   upwardSlope = 0,
+  touch = false,
 ): Promise<{
   flash: string | null;
   visibleFlash: string | null;
@@ -126,7 +127,7 @@ export async function swingAtNextBall(
   // samples keep their source timestamps even if the batch is delivered late,
   // like coalesced motion. The real detector and contact still run in the game.
   return page.evaluate(
-    async ({ prevIdeal, dir, upwardSlope }) => {
+    async ({ prevIdeal, dir, upwardSlope, touch }) => {
       const LEAD_S = 0.06;
       const DUR_S = 0.08;
       const SPIN_S = 0.4;
@@ -167,20 +168,34 @@ export async function swingAtNextBall(
       while (nowS() < start) { /* spin: a frame here would make the flick late */ }
       const t0 = performance.now();
       let events = 0;
-      let lastDispatch = -Infinity;
-      for (;;) {
-        const now = performance.now();
-        const k = Math.min(1, (now - t0) / 1000 / DUR_S);
-        if (now - lastDispatch >= 8 || k >= 1) {
-          const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
-          const y = innerHeight / 2 + upwardSlope * 0.36 * innerWidth * (0.5 - k);
-          const event = new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: y });
-          Object.defineProperty(event, 'timeStamp', { value: (start + k * DUR_S) * 1000 });
-          window.dispatchEvent(event);
-          events++;
-          lastDispatch = now;
+      const dispatch = (type: string, k: number, offset: number) => {
+        const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
+        const y = innerHeight / 2 + upwardSlope * 0.36 * innerWidth * (0.5 - k);
+        const event = new PointerEvent(type, {
+          clientX: fx * innerWidth,
+          clientY: y,
+          pointerType: touch ? 'touch' : 'mouse',
+        });
+        Object.defineProperty(event, 'timeStamp', { value: (start + offset) * 1000 });
+        window.dispatchEvent(event);
+        events++;
+      };
+      if (touch) {
+        dispatch('pointerdown', 0, 0);
+        dispatch('pointermove', 0.5, 0.02);
+        dispatch('pointermove', 1, 0.04);
+        dispatch('pointerup', 1, 0.041);
+      } else {
+        let lastDispatch = -Infinity;
+        for (;;) {
+          const now = performance.now();
+          const k = Math.min(1, (now - t0) / 1000 / DUR_S);
+          if (now - lastDispatch >= 8 || k >= 1) {
+            dispatch('pointermove', k, k * DUR_S);
+            lastDispatch = now;
+          }
+          if (k >= 1) break;
         }
-        if (k >= 1) break;
       }
       const timing = {
         startOffsetMs: Math.round(t0 - ideal * 1000),
@@ -210,7 +225,7 @@ export async function swingAtNextBall(
         contact,
       };
     },
-    { prevIdeal, dir, upwardSlope },
+    { prevIdeal, dir, upwardSlope, touch },
   );
 }
 
