@@ -56,13 +56,17 @@ export class SinglesSession {
     this.transport = openRoom(code, role, {
       status: (status) => this.setStatus(status),
       message: (v) => this.receive(v),
-      error: (reason) => this.end(reason),
+      error: (reason) => this.handleRoomEnd(reason),
     });
-    this.timer = window.setTimeout(() => this.end('Could not connect to the room.'), 25_000);
+    this.timer = window.setTimeout(() => this.handleRoomEnd('Could not connect to the room.'), 25_000);
   }
 
   private setStatus(status: ConnectionStatus): void {
     this.status = status;
+    if (status !== 'open' && this.snapshot?.phase === 'gameover') {
+      this.close();
+      return;
+    }
     if (status === 'open') {
       clearTimeout(this.timer);
       this.lastSent = -Infinity;
@@ -73,13 +77,18 @@ export class SinglesSession {
       this.remoteReady = false;
       this.engine?.setPaused(true, clock());
       clearTimeout(this.timer);
-      this.timer = window.setTimeout(() => this.end('Your opponent disconnected.'), RECONNECT_MS);
+      this.timer = window.setTimeout(() => this.handleRoomEnd('Your opponent disconnected.'), RECONNECT_MS);
     } else if (status === 'connecting' || (status === 'waiting' && this.role === 'host')) {
       clearTimeout(this.timer);
       if (status === 'connecting') {
-        this.timer = window.setTimeout(() => this.end('Could not connect to the room.'), 25_000);
+        this.timer = window.setTimeout(() => this.handleRoomEnd('Could not connect to the room.'), 25_000);
       }
     }
+  }
+
+  private handleRoomEnd(reason: string): void {
+    if (this.snapshot?.phase === 'gameover') this.close();
+    else this.end(reason);
   }
 
   private sendReady(): void {

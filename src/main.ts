@@ -301,9 +301,9 @@ async function main() {
     if (!inputMode || match.phase === 'calibration') return;
 
     const opponent = other(room.role);
-    const notice = room.status === 'lost' ? 'Opponent disconnected · reconnecting…' :
+    const notice = state?.phase === 'gameover' ? (state.winner === room.role ? 'You win!' : 'Opponent wins') :
+      room.status === 'lost' ? 'Opponent disconnected · reconnecting…' :
       room.status !== 'open' ? 'Waiting for your opponent to join' :
-      state?.phase === 'gameover' ? (state.winner === room.role ? 'You win!' : 'Opponent wins') :
       lost ? 'Step back into frame to continue' :
       !state || state.paused ? 'Waiting for both players to be ready' : '';
     if (notice !== onlineNotice) {
