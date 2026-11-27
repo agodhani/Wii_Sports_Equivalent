@@ -34,6 +34,15 @@ describe('serving', () => {
     expect(serveFlight('player', 'deuce', outside).fault).toBe(true);
   });
 
+  it.each([
+    ['deuce', 0.5],
+    ['ad', -0.5],
+  ] as const)('aims a moderate swipe in its actual direction on the %s court', (side, direction) => {
+    const shot = serveShot('player', side, { side: 'forehand', speed: 8, direction, timestamp: 0 });
+    expect(Math.sign(shot.targetX)).toBe(Math.sign(direction));
+    expect(serveFlight('player', side, shot).fault).toBe(true);
+  });
+
   it('ends a serve that hits the net before its otherwise legal landing', () => {
     const shot = { ...serveShot('player', 'deuce', null), flightTime: 0.35 };
     const flight = serveFlight('player', 'deuce', shot);

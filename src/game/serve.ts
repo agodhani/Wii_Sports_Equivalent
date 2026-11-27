@@ -19,10 +19,9 @@ export function serveShot(
   server: Winner, side: ServiceSide, swing: SwingEvent | null, cpuAim = 0,
 ): ShotCommand {
   const box = serviceBoxX(server, side);
-  const path = swing ? swing.direction * box : cpuAim;
   const power = swing ? Math.min(1, Math.max(0, (swing.speed - 4) / 8)) : 0.8;
   return {
-    targetX: box * (2 + path * (path < 0 ? 2.7 : 1.4)),
+    targetX: swing ? 3.4 * swing.direction : box * (2 + cpuAim * (cpuAim < 0 ? 2.7 : 1.4)),
     targetZ: (server === 'player' ? -1 : 1) * (3.8 + 2 * power),
     flightTime: 1.14 - 0.12 * power,
   };
