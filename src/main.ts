@@ -791,6 +791,7 @@ async function main() {
   // import.meta.env.DEV is stripped from production builds by Vite.
   if (import.meta.env.DEV) {
     (window as unknown as Record<string, unknown>).__wt = {
+      characters: () => scene.characterState(),
       state: () => ({
         phase: match.phase,
         idealContactTime: incoming?.idealContactTime ?? null,

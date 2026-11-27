@@ -1,7 +1,7 @@
 import { test as base, expect, type Page } from '@playwright/test';
 
 export const BASE = 'http://localhost:5299';
-export const GL_ARGS = ['--use-gl=angle', '--enable-unsafe-swiftshader'];
+export const GL_ARGS = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 export const RECORDS_KEY = 'webcam-tennis:records:v1';
 
 export interface WtState {
