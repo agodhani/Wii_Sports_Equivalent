@@ -235,6 +235,10 @@ async function main() {
     match.start();
     match.calibrated(); // pointer input needs no calibration
     if (!online) beginServe(performance.now() / 1000);
+    else if (online.status !== 'open') {
+      onlineLobby = true;
+      hud.showWaitingOnlineLobby();
+    }
     hud.setHint('Swipe sideways across the screen as the ball reaches you');
   }
 
