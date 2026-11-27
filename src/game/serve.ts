@@ -9,6 +9,8 @@ const NET_HEIGHT = 0.98;
 const SERVE_Z = 11.95;
 const SERVICE_OFFSET = 1.8;
 const SERVE_WIDE_RETURN_X = 3.5;
+const MIN_SWING_SPEED = 4;
+const SWING_SPEED_RANGE = 8;
 
 export function serviceBoxX(server: Winner, side: ServiceSide): number {
   return (server === 'player') === (side === 'deuce') ? -1 : 1;
@@ -22,7 +24,7 @@ export function serveShot(
   server: Winner, side: ServiceSide, swing: SwingEvent | null, cpuAim = 0,
 ): ShotCommand {
   const box = serviceBoxX(server, side);
-  const power = swing ? Math.min(1, Math.max(0, (swing.speed - 4) / 8)) : 0.8;
+  const power = swing ? Math.min(1, Math.max(0, (swing.speed - MIN_SWING_SPEED) / SWING_SPEED_RANGE)) : 0.8;
   const depth = Math.min(0.5 + 17 * power, 3.8 + 2 * power);
   const landingWidth = (SERVE_WIDE_RETURN_X + SERVICE_OFFSET) *
     (SERVE_Z + depth) / (SERVE_Z - CPU_STRIKE_Z) - SERVICE_OFFSET;
@@ -51,4 +53,16 @@ export function serveFlight(server: Winner, side: ServiceSide, shot: ShotCommand
   const x = serviceBoxX(server, side) * shot.targetX;
   const depth = (server === 'player' ? -1 : 1) * shot.targetZ;
   return { ball, duration: shot.flightTime, fault: x < 0 || x > COURT_HALF_W || depth <= 0 || depth > SERVICE_Z, hitNet: false };
+}
+
+export function netClearingServeSpeed(): number {
+  let below = MIN_SWING_SPEED;
+  let above = MIN_SWING_SPEED + SWING_SPEED_RANGE;
+  for (let i = 0; i < 20; i++) {
+    const speed = (below + above) / 2;
+    const shot = serveShot('player', 'deuce', { speed, side: 'forehand', timestamp: 0, direction: -1 });
+    if (serveFlight('player', 'deuce', shot).hitNet) below = speed;
+    else above = speed;
+  }
+  return above;
 }

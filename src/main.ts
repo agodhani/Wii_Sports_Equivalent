@@ -1,10 +1,10 @@
 import { startCamera } from './camera';
 import { PoseTracker } from './tracking/pose';
 import { SwingDetector, TRIGGER_SCORE } from './swing/detector';
-import { PointerSwingDetector, POINTER_TRIGGER } from './input/pointer';
+import { PointerSwingDetector, POINTER_TRIGGER, pointerStrengthForSwingSpeed } from './input/pointer';
 import { Match, type Winner } from './game/match';
 import { BALL_RADIUS, GRAVITY, RESTITUTION, stepBall, timeToReachZ, launchBall, predictAtZ, type BallState } from './game/ball';
-import { COURT_HALF_W, serveContact, serveFlight, servePosition, serveShot, serviceBoxX } from './game/serve';
+import { COURT_HALF_W, netClearingServeSpeed, serveContact, serveFlight, servePosition, serveShot, serviceBoxX } from './game/serve';
 import { resolveHit, CONTACT_WINDOW_S, type IncomingBall } from './game/hit';
 import { timingCue } from './game/timing';
 import { newStats, summarize } from './game/stats';
@@ -29,6 +29,7 @@ import type {
 } from './types';
 
 const PLAYER_Z = 11;
+const POINTER_SERVE_THRESHOLD = pointerStrengthForSwingSpeed(netClearingServeSpeed());
 
 // Calibration: how vigorously the playing hand must wave to start the match.
 // Measured as average wrist speed in shoulder-widths/sec, so it is independent
@@ -580,12 +581,20 @@ async function main() {
     } else {
       scene.setArmVisible(false);
     }
+    const playerServing = match.phase === 'serving' && match.server === 'player';
     if (match.phase === 'menu' || match.phase === 'gameover') {
       hud.hideSwingMeter();
     } else if (inputMode === 'pointer') {
-      hud.setSwingMeter(pointerDetector.strengthAt(now), POINTER_TRIGGER);
+      const strength = playerServing && pendingPointerSwing
+        ? pointerStrengthForSwingSpeed(pendingPointerSwing.speed)
+        : pointerDetector.strengthAt(now);
+      hud.setSwingMeter(
+        strength,
+        playerServing ? POINTER_SERVE_THRESHOLD : POINTER_TRIGGER,
+        playerServing && (servePromptPending || delivery) ? false : undefined,
+      );
     } else if (detector) {
-      hud.setSwingMeter(detector.strength, TRIGGER_SCORE);
+      hud.setSwingMeter(detector.strength, TRIGGER_SCORE, playerServing ? null : undefined);
     }
 
     // ---- calibration phase ----

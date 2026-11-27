@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { timeToReachZ } from '../src/game/ball';
 import { CPU_STRIKE_Z, cpuReturn } from '../src/game/cpu';
-import { serveContact, serveFlight, servePosition, serveShot, serviceBoxX } from '../src/game/serve';
-import { PointerSwingDetector } from '../src/input/pointer';
+import { netClearingServeSpeed, serveContact, serveFlight, servePosition, serveShot, serviceBoxX } from '../src/game/serve';
+import { PointerSwingDetector, POINTER_TRIGGER, pointerStrengthForSwingSpeed } from '../src/input/pointer';
 
 describe('serving', () => {
   it.each([
@@ -56,6 +56,22 @@ describe('serving', () => {
     expect(flight.fault).toBe(true);
     expect(flight.hitNet).toBe(true);
     expect(flight.duration).toBeLessThan(shot.flightTime);
+  });
+
+  it('marks net clearance, rather than swing recognition, on the pointer strength scale', () => {
+    const threshold = pointerStrengthForSwingSpeed(netClearingServeSpeed());
+    const swing = (strength: number) => {
+      const pointer = new PointerSwingDetector();
+      pointer.update({ t: 0, x: 0.6, y: 0.5 });
+      return pointer.update({ t: 0.04, x: 0.6 - strength * 0.04, y: 0.5 });
+    };
+    expect(threshold - 0.001).toBeGreaterThan(POINTER_TRIGGER);
+    const below = swing(threshold - 0.001);
+    const above = swing(threshold + 0.001);
+    expect(below).not.toBeNull();
+    expect(above).not.toBeNull();
+    expect(serveFlight('player', 'deuce', serveShot('player', 'deuce', below)).hitNet).toBe(true);
+    expect(serveFlight('player', 'deuce', serveShot('player', 'deuce', above)).hitNet).toBe(false);
   });
 
   it.each([

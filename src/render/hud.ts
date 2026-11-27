@@ -152,17 +152,16 @@ export class Hud {
   }
 
   /**
-   * Live swing strength against the trigger threshold. The white mark is the
-   * threshold, so a swing that fails to register shows exactly how short it fell
-   * — which is what makes the trigger tunable by playing rather than by guessing.
+   * Swing strength against the marked threshold, with neutral color when
+   * this input's strength does not indicate serve power.
    */
-  setSwingMeter(strength: number, threshold: number): void {
+  setSwingMeter(strength: number, threshold: number, ready: boolean | null = strength >= threshold): void {
     const meter = this.root.querySelector('#meter') as HTMLElement;
     meter.style.display = 'block';
     const full = threshold * 1.6; // headroom so a solid swing doesn't peg the bar
     const fill = this.root.querySelector('#meter-fill') as HTMLElement;
     fill.style.width = `${Math.min(100, (strength / full) * 100)}%`;
-    fill.style.background = strength >= threshold ? '#5ce65c' : '#ffe14d';
+    fill.style.background = ready === null ? '#fff' : ready ? '#5ce65c' : '#ffe14d';
     (this.root.querySelector('#meter-mark') as HTMLElement).style.left =
       `${(threshold / full) * 100}%`;
   }

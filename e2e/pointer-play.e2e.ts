@@ -110,8 +110,20 @@ test('a weak serve into the net tells the player to swing faster', async ({ page
   await openGame(page);
   await page.click('#home-pointer');
   await expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
+  const fill = page.locator('#meter-fill');
+  await fill.evaluate((el: HTMLElement) => {
+    new MutationObserver(() => {
+      if (Number.parseFloat(el.style.width) > 0) el.dataset.swingColor = el.style.backgroundColor;
+    }).observe(el, { attributes: true, attributeFilter: ['style'] });
+  });
   await swingServe(page, false, WEAK_SERVE_DISTANCE);
   await expect(page.locator('#flash')).toHaveText('Fault — into the net. Swing faster.');
+  await expect(fill).toHaveAttribute('data-swing-color', 'rgb(255, 225, 77)');
+
+  await expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
+  await swingServe(page);
+  await waitForPhase(page, 'rally', 10_000);
+  await expect(fill).toHaveAttribute('data-swing-color', 'rgb(92, 230, 92)');
 });
 
 test('a swipe during the retry delay does not block the swipe at the prompt', async ({ page }) => {
