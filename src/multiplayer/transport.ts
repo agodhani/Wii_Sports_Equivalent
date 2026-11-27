@@ -64,6 +64,7 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
   };
   const requestRestart = () => {
     lost();
+    if (closed) return;
     clearTimeout(restart);
     restart = window.setTimeout(() => signal({ type: 'restart', round }), 1000);
   };
@@ -136,7 +137,7 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
       if (closed) return;
       resetPeer();
       lost();
-      retry = window.setTimeout(connectSocket, 500);
+      if (!closed) retry = window.setTimeout(connectSocket, 500);
     };
     ws.onmessage = ({ data }) => {
       let m;
