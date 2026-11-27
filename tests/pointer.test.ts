@@ -88,6 +88,14 @@ describe('PointerSwingDetector', () => {
     expect(slice).toMatchObject([{ event: { shotType: 'slice' } }]);
   });
 
+  it('registers a fast sparse swipe without double-firing during continuous motion', () => {
+    const d = new PointerSwingDetector();
+    const events = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+      .map((t) => d.update({ t, x: 0.1 + 1.5 * t, y: 0.5 - 0.8 * t }))
+      .filter(Boolean);
+    expect(events).toMatchObject([{ shotType: 'topspin', timestamp: 0.1 }]);
+  });
+
   it('merges back-to-back flicks into one event, fires again after a hold', () => {
     const d = new PointerSwingDetector();
     expect(feed(d, 0, 0.1, horizontal(0.3, 0.6))).toHaveLength(1);

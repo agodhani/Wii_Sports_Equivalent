@@ -42,10 +42,15 @@ export class PointerSwingDetector {
 
   update(s: PointerSample): SwingEvent | null {
     const previous = this.history[this.history.length - 1];
+    let sparseStart: PointerSample | undefined;
     if (previous && s.t - previous.t > WINDOW_S) {
       this.history = [];
       this.strength = 0;
-      if (s.t - this.triggeredAt >= COOLDOWN_S) this.state = 'idle';
+      if (Math.abs(s.x - previous.x) >= POINTER_TRIGGER * (s.t - previous.t)) {
+        sparseStart = previous;
+      } else if (s.t - this.triggeredAt >= COOLDOWN_S) {
+        this.state = 'idle';
+      }
     }
     this.history.push(s);
 
@@ -55,7 +60,7 @@ export class PointerSwingDetector {
       this.history.shift();
     }
 
-    const oldest = this.history[0];
+    const oldest = sparseStart ?? this.history[0];
     const span = s.t - oldest.t;
     if (span < MIN_WINDOW_S) return null;
 
