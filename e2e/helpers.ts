@@ -190,7 +190,7 @@ export async function swingAtNextBall(
       if (touch) {
         dispatch('pointerdown', 0, 0);
         dispatch('pointerdown', 1.4, 0.004, 2);
-        dispatch('pointermove', 1.4, 0.012, 2);
+        dispatch('pointermove', -0.5, 0.035, 2);
         dispatch('pointermove', 0.5, 0.04);
         dispatch('pointerup', 1.4, 0.043, 2);
         dispatch('pointermove', 1, 0.055);
