@@ -4,6 +4,7 @@ import type { SwingEvent } from '../src/types';
 
 const incoming: IncomingBall = { idealContactTime: 10, ballSide: 'forehand' };
 const swing = (over: Partial<SwingEvent> = {}): SwingEvent => ({
+  shotType: 'flat',
   side: 'forehand', speed: 8, direction: 0, timestamp: 10, ...over,
 });
 
@@ -42,4 +43,19 @@ describe('resolveHit', () => {
     expect(hard.flightTime).toBeLessThan(soft.flightTime);
     expect(hard.targetZ).toBeLessThan(soft.targetZ);
   });
+
+  it.each(['flat', 'topspin', 'lob', 'slice'] as const)(
+    'resolves %s without changing timing, side or aim rules',
+    (shotType) => {
+      const input = swing({ shotType, direction: 0.3, timestamp: 9.9 });
+      const shot = resolveHit(input, incoming)!;
+      const flat = resolveHit({ ...input, shotType: 'flat' }, incoming)!;
+      expect(shot.shotType).toBe(shotType);
+      expect(shot.targetX).toBe(flat.targetX);
+      expect(shot.targetZ).toBeLessThan(0);
+      expect(shot.targetZ).toBeGreaterThanOrEqual(-11);
+      expect(resolveHit({ ...input, side: 'backhand' }, incoming)).toBeNull();
+      expect(resolveHit({ ...input, timestamp: 9.8 }, incoming)).toBeNull();
+    },
+  );
 });

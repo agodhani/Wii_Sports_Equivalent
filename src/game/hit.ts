@@ -20,9 +20,16 @@ export function resolveHit(swing: SwingEvent, incoming: IncomingBall): ShotComma
   targetX = clamp(targetX, -MAX_TARGET_X, MAX_TARGET_X);
 
   const p = clamp((swing.speed - 4) / 8, 0, 1);
-  return {
-    targetX,
-    targetZ: -(6 + 5 * p),
-    flightTime: 1.4 - 0.5 * p,
-  };
+  const flightTime = 1.4 - 0.5 * p;
+  const { shotType } = swing;
+  switch (shotType) {
+    case 'topspin':
+      return { shotType, targetX, targetZ: -(5 + 4.5 * p), flightTime: 0.8 * flightTime };
+    case 'lob':
+      return { shotType, targetX, targetZ: -(9.6 + 1.4 * p), flightTime: 2.0 - 0.25 * p };
+    case 'slice':
+      return { shotType, targetX, targetZ: -(7 + 3.5 * p), flightTime: flightTime + 0.08 };
+    case 'flat':
+      return { shotType, targetX, targetZ: -(6 + 5 * p), flightTime };
+  }
 }

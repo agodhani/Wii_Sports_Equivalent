@@ -115,6 +115,36 @@ describe('SwingDetector', () => {
     expect(verticalSweep(d, 0.3, 0.6, 0.2, 0)).toHaveLength(0);
   });
 
+  it.each([
+    ['flat', 0.02],
+    ['topspin', -0.15],
+    ['lob', -0.38],
+    ['slice', 0.18],
+  ] as const)('classifies a %s swing from the wrist path', (shotType, deltaY) => {
+    const d = new SwingDetector('right');
+    const events = [];
+    for (let i = 0; i <= 6; i++) {
+      const p = i / 6;
+      const event = d.update(frameOf(i / 30, { x: 0.8 - 0.3 * p, y: 0.5 + deltaY * p }, 'right'));
+      if (event) events.push(event);
+    }
+    expect(events).toMatchObject([{ side: 'forehand', shotType }]);
+  });
+
+  it('does not count whole-body vertical movement as wrist lift', () => {
+    const d = new SwingDetector('right');
+    const events = [];
+    for (let i = 0; i <= 6; i++) {
+      const p = i / 6;
+      const f = frameOf(i / 30, { x: 0.8 - 0.3 * p, y: 0.6 - 0.4 * p }, 'right');
+      f.leftShoulder.y -= 0.4 * p;
+      f.rightShoulder.y -= 0.4 * p;
+      const event = d.update(f);
+      if (event) events.push(event);
+    }
+    expect(events).toMatchObject([{ shotType: 'flat' }]);
+  });
+
   it('left-handed player fires forehand when left wrist starts left of the midpoint', () => {
     const d = new SwingDetector('left');
     const events = sweep(d, 0.2, 0.5, 0.2, 0, 'left');

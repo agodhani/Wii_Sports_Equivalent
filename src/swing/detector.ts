@@ -1,4 +1,5 @@
 import type { PoseFrame, SwingEvent, Handedness, Vec2 } from '../types';
+import { classifyShot } from './shotType';
 
 /**
  * Swing detection from body pose.
@@ -18,6 +19,7 @@ import type { PoseFrame, SwingEvent, Handedness, Vec2 } from '../types';
 const WINDOW_S = 0.12;          // measurement window
 const MIN_WINDOW_S = 0.05;      // need at least this much span to measure
 const MIN_HORIZONTAL = 2.0;     // shoulder-widths/sec, gate: swings go sideways
+const MIN_RISE = 0.08;          // shoulder widths, ignore small vertical shifts
 export const TRIGGER_SCORE = 5.0;
 const RESET_SPEED = 1.0;
 const COOLDOWN_S = 0.25;
@@ -30,7 +32,7 @@ interface Sample {
   forearmAngle: number;   // radians, elbow → wrist
   torsoAngle: number;     // radians, shoulder line
   shoulderMidX: number;
-  shoulderWidth: number;
+  relativeWristY: number;
 }
 
 /** Smallest signed difference between two angles, in [-π, π]. */
@@ -69,7 +71,7 @@ export class SwingDetector {
         f.rightShoulder.x - f.leftShoulder.x,
       ),
       shoulderMidX: (f.leftShoulder.x + f.rightShoulder.x) / 2,
-      shoulderWidth: f.shoulderWidth,
+      relativeWristY: (wrist.y - (f.leftShoulder.y + f.rightShoulder.y) / 2) / f.shoulderWidth,
     });
 
     // Keep exactly one sample at or before the window start, so the span always
@@ -110,6 +112,11 @@ export class SwingDetector {
           : onRight ? 'backhand' : 'forehand';
       return {
         side,
+        shotType: classifyShot(
+          horizontal * span,
+          oldest.relativeWristY - now.relativeWristY,
+          MIN_RISE,
+        ),
         speed: wristSpeed,
         direction: Math.max(-1, Math.min(1, wristVx / 10)),
         timestamp: f.t,

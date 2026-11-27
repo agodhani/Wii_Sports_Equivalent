@@ -110,6 +110,7 @@ export async function swingAtNextBall(
   page: Page,
   prevIdeal: number | null = null,
   dir = 1,
+  upwardSlope = 0,
 ): Promise<{ flash: string | null; ideal: number | null; timing: FlickTiming | null }> {
   let ideal: number | null = null;
   const t0 = Date.now();
@@ -139,7 +140,7 @@ export async function swingAtNextBall(
   // the swing before checking contact in its next frame, so briefly blocking
   // the main thread doesn't change the outcome.
   const timing = await page.evaluate(
-    async ({ ideal, dir }) => {
+    async ({ ideal, dir, upwardSlope }) => {
       const LEAD_S = 0.06;
       const DUR_S = 0.08;
       const SPIN_S = 0.4;
@@ -155,8 +156,9 @@ export async function swingAtNextBall(
         const k = Math.min(1, (now - t0) / 1000 / DUR_S);
         if (now - lastDispatch >= 8 || k >= 1) {
           const fx = dir > 0 ? 0.32 + 0.36 * k : 0.68 - 0.36 * k;
+          const y = innerHeight / 2 + upwardSlope * 0.36 * innerWidth * (0.5 - k);
           window.dispatchEvent(
-            new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: innerHeight / 2 }),
+            new PointerEvent('pointermove', { clientX: fx * innerWidth, clientY: y }),
           );
           events++;
           lastDispatch = now;
@@ -169,9 +171,12 @@ export async function swingAtNextBall(
         events,
       };
     },
-    { ideal, dir },
+    { ideal, dir, upwardSlope },
   );
-  await page.waitForTimeout(400);
+  if (upwardSlope === 0) await page.waitForTimeout(400);
+  else await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
   const flash = await page.$eval('#flash', (e) => e.textContent).catch(() => null);
   return { flash, ideal, timing };
 }

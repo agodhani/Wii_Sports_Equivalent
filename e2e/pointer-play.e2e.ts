@@ -65,3 +65,18 @@ test('idle ball flashes Miss! and scores for the CPU', async ({ page }) => {
   await expect(page.locator('#flash')).toHaveText('Miss!');
   expect((await state(page)).cpuScore).toBe(cpuBefore + 1);
 });
+
+test('angled pointer swings announce topspin, lob and slice', async ({ page }) => {
+  await openGame(page);
+  await page.click('#home-pointer');
+  await expect(page.locator('#hint')).toContainText('lift steeply for lob');
+
+  let prev: number | null = null;
+  for (const [label, slope, dir] of [['Topspin', 0.55, 1], ['Lob', 1.35, -1], ['Slice', -0.55, 1]] as const) {
+    const { flash, ideal, timing } = await swingAtNextBall(page, prev, dir, slope);
+    expect(flash, `${label} flick: ${JSON.stringify(timing)}`).toMatch(
+      new RegExp(`^${label}! · (Perfect|Early|Late)!$`),
+    );
+    prev = ideal;
+  }
+});

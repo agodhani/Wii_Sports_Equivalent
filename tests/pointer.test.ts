@@ -63,6 +63,23 @@ describe('PointerSwingDetector', () => {
     expect(events).toHaveLength(0);
   });
 
+  it.each([
+    ['flat', 0.02],
+    ['topspin', -0.15],
+    ['lob', -0.4],
+    ['slice', 0.18],
+  ] as const)('classifies a %s flick from the pointer path', (shotType, deltaY) => {
+    const d = new PointerSwingDetector();
+    const events = feed(d, 0, 0.1, (p) => ({ x: 0.3 + 0.3 * p, y: 0.5 + deltaY * p }));
+    expect(events).toMatchObject([{ event: { shotType } }]);
+  });
+
+  it('rejects an upward flick with too little sideways intent', () => {
+    const d = new PointerSwingDetector();
+    const events = feed(d, 0, 0.1, (p) => ({ x: 0.3 + 0.15 * p, y: 0.7 - 0.5 * p }));
+    expect(events).toHaveLength(0);
+  });
+
   it('merges back-to-back flicks into one event, fires again after a hold', () => {
     const d = new PointerSwingDetector();
     expect(feed(d, 0, 0.1, horizontal(0.3, 0.6))).toHaveLength(1);
