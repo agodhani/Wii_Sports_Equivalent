@@ -129,7 +129,7 @@ export async function swingAtNextBall(
     async ({ prevIdeal, dir, upwardSlope }) => {
       const LEAD_S = 0.06;
       const DUR_S = 0.08;
-      const SPIN_S = 0.8;
+      const SPIN_S = 0.4;
       const nowS = () => performance.now() / 1000;
       const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
       const read = () => (window as unknown as { __wt: { state(): WtState } }).__wt.state();
