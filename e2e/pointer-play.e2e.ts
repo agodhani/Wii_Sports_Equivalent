@@ -111,18 +111,31 @@ test('a weak serve into the net tells the player to swing faster', async ({ page
   await page.click('#home-pointer');
   await expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
   const fill = page.locator('#meter-fill');
-  await fill.evaluate((el: HTMLElement) => {
-    new MutationObserver(() => {
-      if (Number.parseFloat(el.style.width) > 0) el.dataset.swingColor = el.style.backgroundColor;
-    }).observe(el, { attributes: true, attributeFilter: ['style'] });
+  const captureServeColor = () => fill.evaluate((el: HTMLElement) => {
+    const { state } = (window as unknown as {
+      __wt: { state(): { phase: string; server: string } };
+    }).__wt;
+    delete el.dataset.swingColor;
+    const observer = new MutationObserver(() => {
+      const { phase, server } = state();
+      if (phase !== 'serving' || server !== 'player') {
+        observer.disconnect();
+      } else if (Number.parseFloat(el.style.width) > 0) {
+        el.dataset.swingColor = el.style.backgroundColor;
+        observer.disconnect();
+      }
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['style'] });
   });
+  await captureServeColor();
   await swingServe(page, false, WEAK_SERVE_DISTANCE);
   await expect(page.locator('#flash')).toHaveText('Fault — into the net. Swing faster.');
   await expect(fill).toHaveAttribute('data-swing-color', 'rgb(255, 225, 77)');
 
   await expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
-  await swingServe(page);
-  await waitForPhase(page, 'rally', 10_000);
+  await captureServeColor();
+  await swingServe(page, true);
+  await expect(page.locator('#flash')).toHaveText('Double fault');
   await expect(fill).toHaveAttribute('data-swing-color', 'rgb(92, 230, 92)');
 });
 
