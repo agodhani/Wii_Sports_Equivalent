@@ -80,14 +80,12 @@ export class Hud {
               Play with Mouse / Touch
               <div style="font-size:11px;font-weight:500;opacity:.6;margin-top:3px">
                 Starts instantly · no camera needed</div></button>
-            <button id="home-multi" disabled title="Coming soon" style="padding:14px 0;
-              font-size:15px;font-weight:600;border:1px solid rgba(255,255,255,.25);
-              border-radius:8px;background:transparent;color:rgba(255,255,255,.4);
-              cursor:not-allowed">
+            <button id="home-multi" style="padding:14px 0;
+              font-size:16px;font-weight:700;border:1px solid rgba(255,255,255,.8);
+              border-radius:8px;background:transparent;color:#fff;cursor:pointer">
               Play Multiplayer
-              <span style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;
-                margin-left:8px;background:rgba(255,255,255,.12);padding:2px 6px;
-                border-radius:4px">Coming soon</span></button>
+              <div style="font-size:11px;font-weight:500;opacity:.6;margin-top:3px">
+                Invite a friend · one on one</div></button>
           </div>
           <div style="display:flex;align-items:center;gap:10px">
             <span style="font-size:12px;text-transform:uppercase;letter-spacing:.07em;
@@ -105,6 +103,27 @@ export class Hud {
             Camera video is processed on your device and never uploaded.</div>
         </div>
       </div>
+      <section id="online-lobby" aria-label="Multiplayer room" style="position:fixed;inset:0;
+        display:none;place-items:safe center;overflow:auto;touch-action:pan-y;
+        background:rgba(10,14,24,.6);color:#fff;text-align:center">
+        <div style="display:grid;gap:12px;width:min(360px,calc(100% - 64px));padding:24px;
+          border-radius:16px;background:#161d2c">
+          <h2 style="margin:0">Multiplayer singles</h2>
+          <div id="online-code"></div>
+          <p id="online-status" role="status" style="margin:0"></p>
+          <label id="online-invite-label">Invite link
+            <input id="online-invite" readonly style="box-sizing:border-box;width:100%;margin-top:6px">
+          </label>
+          <button id="online-copy" type="button">Copy invite link</button>
+          <button id="online-camera" type="button">Play with Camera</button>
+          <button id="online-pointer" type="button">Play with Mouse / Touch</button>
+          <button id="online-back" type="button">Back to home</button>
+        </div>
+      </section>
+      <button id="online-leave" type="button" style="display:none;position:fixed;top:16px;left:16px;
+        padding:8px 12px;border:0;border-radius:8px;cursor:pointer">Leave room</button>
+      <span id="online-path" hidden style="position:fixed;top:52px;left:16px;color:#fff;
+        font:12px system-ui,sans-serif;text-shadow:0 1px 3px #000;pointer-events:none"></span>
       <canvas id="preview" width="160" height="120" style="position:fixed;right:16px;
         bottom:16px;border:2px solid rgba(255,255,255,.5);border-radius:8px;
         display:none"></canvas>
@@ -169,8 +188,7 @@ export class Hud {
    * Show the home screen over the live demo rally. The player picks an input
    * mode — camera (tracked arm swing) or pointer (mouse/touch swipe) — plus a
    * CPU difficulty; the matching handler is called with that difficulty.
-   * Multiplayer has no game behind it yet, so its button stays disabled rather
-   * than pretending to work. With a challenge link, a banner with its own CTA
+   * With a challenge link, a banner with its own CTA
    * becomes the primary action and the camera button is demoted to outline.
    * Safe to call repeatedly — banner and handlers are rewritten each time.
    */
@@ -179,6 +197,7 @@ export class Hud {
       onCamera(difficulty: CpuDifficulty): void;
       onPointer(difficulty: CpuDifficulty): void;
       onChallenge?(): void;
+      onMultiplayer(): void;
     },
     challenge?: Challenge | null,
   ): void {
@@ -243,6 +262,68 @@ export class Hud {
     };
     cameraBtn.onclick = pick(handlers.onCamera);
     pointerBtn.onclick = pick(handlers.onPointer);
+    (this.root.querySelector('#home-multi') as HTMLButtonElement).onclick = handlers.onMultiplayer;
+  }
+
+  showOnlineLobby(
+    code: string, invite: string | null, controls: { camera(): void; pointer(): void; leave(): void },
+  ): void {
+    (this.root.querySelector('#home') as HTMLElement).style.display = 'none';
+    (this.root.querySelector('#online-lobby') as HTMLElement).style.display = 'grid';
+    this.root.querySelector('#online-code')!.textContent = `Room ${code}`;
+    const link = this.root.querySelector('#online-invite') as HTMLInputElement;
+    const copy = this.root.querySelector('#online-copy') as HTMLButtonElement;
+    (this.root.querySelector('#online-invite-label') as HTMLElement).hidden = !invite;
+    copy.hidden = !invite;
+    link.value = invite ?? '';
+    link.onclick = () => link.select();
+    copy.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(link.value);
+        this.toast('Invite link copied');
+      } catch {
+        link.focus();
+        link.select();
+      }
+    };
+    const camera = this.root.querySelector('#online-camera') as HTMLButtonElement;
+    camera.disabled = false;
+    camera.onclick = controls.camera;
+    (this.root.querySelector('#online-pointer') as HTMLButtonElement).onclick = controls.pointer;
+    (this.root.querySelector('#online-back') as HTMLButtonElement).onclick = controls.leave;
+    (this.root.querySelector('#online-leave') as HTMLButtonElement).onclick = controls.leave;
+  }
+
+  setOnlineLobbyStatus(text: string): void {
+    this.root.querySelector('#online-status')!.textContent = text;
+  }
+
+  setOnlinePath(path: 'direct' | 'relayed' | null): void {
+    const label = this.root.querySelector<HTMLElement>('#online-path')!;
+    const text = path === 'direct' ? 'Direct connection' : path === 'relayed' ? 'Relayed connection' : '';
+    if (label.textContent !== text) label.textContent = text;
+    label.hidden = !path;
+  }
+
+  hideOnlineLobby(): void {
+    (this.root.querySelector('#online-lobby') as HTMLElement).style.display = 'none';
+    (this.root.querySelector('#online-leave') as HTMLButtonElement).style.display = 'block';
+  }
+
+  showWaitingOnlineLobby(): void {
+    (this.root.querySelector('#online-lobby') as HTMLElement).style.display = 'grid';
+    (this.root.querySelector('#online-leave') as HTMLButtonElement).style.display = 'none';
+    (this.root.querySelector('#online-camera') as HTMLButtonElement).disabled = true;
+  }
+
+  closeOnlineLobby(): void {
+    (this.root.querySelector('#online-lobby') as HTMLElement).style.display = 'none';
+    (this.root.querySelector('#online-leave') as HTMLButtonElement).style.display = 'none';
+    this.setOnlinePath(null);
+  }
+
+  hidePreview(): void {
+    (this.root.querySelector('#preview') as HTMLCanvasElement).style.display = 'none';
   }
 
   /**

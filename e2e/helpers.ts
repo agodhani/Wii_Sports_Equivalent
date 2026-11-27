@@ -110,10 +110,11 @@ export async function swingAtNextBall(
   page: Page,
   prevIdeal: number | null = null,
   dir = 1,
+  armInPage = false,
 ): Promise<{ flash: string | null; ideal: number | null; timing: FlickTiming | null }> {
   let ideal: number | null = null;
   const t0 = Date.now();
-  while (Date.now() - t0 < 15_000) {
+  while (!armInPage && Date.now() - t0 < 15_000) {
     const s = await state(page);
     if (
       s.phase === 'rally' &&
@@ -126,7 +127,7 @@ export async function swingAtNextBall(
     }
     await page.waitForTimeout(12);
   }
-  if (ideal === null) return { flash: null, ideal: null, timing: null };
+  if (ideal === null && !armInPage) return { flash: null, ideal: null, timing: null };
 
   // A 0.36-viewport flick over 80 ms (~4.5 widths/s, well past the 1.2
   // trigger) starting 60 ms before ideal: the detector trips ~30 ms in, which
@@ -138,12 +139,26 @@ export async function swingAtNextBall(
   // in between. The game judges swings by event timestamp, and it consumes
   // the swing before checking contact in its next frame, so briefly blocking
   // the main thread doesn't change the outcome.
-  const timing = await page.evaluate(
-    async ({ ideal, dir }) => {
+  const result = await page.evaluate(
+    async ({ ideal, dir, prevIdeal }) => {
       const LEAD_S = 0.06;
       const DUR_S = 0.08;
       const SPIN_S = 0.4;
       const nowS = () => performance.now() / 1000;
+      if (ideal === null) {
+        const w = window as unknown as { __wt: { state(): WtState } };
+        const until = nowS() + 15;
+        while (nowS() < until) {
+          const s = w.__wt.state();
+          if (s.phase === 'rally' && s.idealContactTime !== null &&
+              s.idealContactTime > s.now && s.idealContactTime !== prevIdeal) {
+            ideal = s.idealContactTime;
+            break;
+          }
+          await new Promise(requestAnimationFrame);
+        }
+      }
+      if (ideal === null) return null;
       const start = ideal - LEAD_S;
       while (nowS() < start - SPIN_S) await new Promise((r) => setTimeout(r, 4));
       while (nowS() < start) { /* spin: a frame here would make the flick late */ }
@@ -164,16 +179,21 @@ export async function swingAtNextBall(
         if (k >= 1) break;
       }
       return {
-        startOffsetMs: Math.round(t0 - ideal * 1000),
-        durationMs: Math.round(performance.now() - t0),
-        events,
+        ideal,
+        timing: {
+          startOffsetMs: Math.round(t0 - ideal * 1000),
+          durationMs: Math.round(performance.now() - t0),
+          events,
+        },
       };
     },
-    { ideal, dir },
+    { ideal, dir, prevIdeal },
   );
+  if (!result) return { flash: null, ideal: null, timing: null };
+  if (armInPage) return { ...result, flash: null };
   await page.waitForTimeout(400);
   const flash = await page.$eval('#flash', (e) => e.textContent).catch(() => null);
-  return { flash, ideal, timing };
+  return { ...result, flash };
 }
 
 /** Smoothed fps from the HUD counter, for failure diagnostics. */
