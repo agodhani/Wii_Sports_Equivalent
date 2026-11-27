@@ -124,6 +124,12 @@ describe('ball physics', () => {
     expect(bounce.pos.z).toBeLessThan(-8.5);
   });
 
+  it.each([1 / 60, 0.05])('lets a full-power slice skid before the CPU can return it (dt=%s)', (dt) => {
+    const { bounce, before } = firstFlight('slice', 12, dt);
+    expect(bounce.pos.z).toBeGreaterThan(-9.8);
+    expect(Math.abs(bounce.vel.z)).toBeLessThan(Math.abs(before.vel.z));
+  });
+
   it('applies more downward acceleration with topspin and less with backspin', () => {
     const b: BallState = { pos: { x: 0, y: 2, z: 0 }, vel: { x: 0, y: 0, z: -8 } };
     const flat = stepBall(b, 0.05);

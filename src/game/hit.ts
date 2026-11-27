@@ -29,7 +29,7 @@ export function resolveHit(swing: SwingEvent, incoming: IncomingBall): ShotComma
       // Land deep but short of the CPU's strike plane at z = -9.8.
       return { shotType, targetX, targetZ: -(8.8 + 0.7 * p), flightTime: 2.0 - 0.25 * p };
     case 'slice':
-      return { shotType, targetX, targetZ: -(7 + 3.5 * p), flightTime: flightTime + 0.08 };
+      return { shotType, targetX, targetZ: -(7 + 2.5 * p), flightTime: flightTime + 0.08 };
     case 'flat':
       return { shotType, targetX, targetZ: -(6 + 5 * p), flightTime };
   }
