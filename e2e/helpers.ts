@@ -162,6 +162,11 @@ export async function swingAtNextBall(
           ? flashEl.textContent
           : null;
       };
+      let visibleFlash: string | null = null;
+      const flashObserver = new MutationObserver(() => {
+        visibleFlash ??= readVisibleFlash();
+      });
+      if (flashEl) flashObserver.observe(flashEl, { childList: true, attributes: true, attributeFilter: ['style'] });
 
       const start = ideal - LEAD_S;
       while (nowS() < start - SPIN_S) await nextFrame();
@@ -209,25 +214,17 @@ export async function swingAtNextBall(
       };
       const contactDeadline = nowS() + 15;
       let s = read();
-      let visibleFlash = readVisibleFlash();
       while (s.idealContactTime === ideal && s.rally === rally && nowS() < contactDeadline) {
         await nextFrame();
         s = read();
-        visibleFlash ??= readVisibleFlash();
       }
-      const flash = flashEl?.textContent ?? null;
-      const contact = s.rally > rally;
-      const flashDeadline = nowS() + 1;
-      while (contact && visibleFlash === null && nowS() < flashDeadline) {
-        await nextFrame();
-        visibleFlash = readVisibleFlash();
-      }
+      flashObserver.disconnect();
       return {
-        flash,
-        visibleFlash,
+        flash: flashEl?.textContent ?? null,
+        visibleFlash: visibleFlash ?? readVisibleFlash(),
         ideal,
         timing,
-        contact,
+        contact: s.rally > rally,
       };
     },
     { prevIdeal, dir, upwardSlope, touch },

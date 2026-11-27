@@ -78,6 +78,7 @@ test('quick touch swipe counts from primary touchdown and ignores a second finge
 for (const [label, slope, dir] of [['Topspin', 0.55, 1], ['Lob', 1.35, -1], ['Slice', -0.55, 1]] as const) {
   test(`angled pointer swing connects and announces ${label}`, async ({ page }) => {
     await openGame(page);
+    await page.addStyleTag({ content: '#flash { transition: none !important; }' });
     await page.click('#home-pointer');
     await expect(page.locator('#hint')).toContainText('lift steeply for lob');
 
