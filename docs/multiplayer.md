@@ -30,5 +30,7 @@ to the home screen. Reloading or closing either tab does not preserve a match.
   without TURN.
 
 The WebSocket server only matches the two room members and relays WebRTC setup.
+Each instance holds up to 128 two-player rooms. Rooms expire two hours after
+creation, even if both players are still connected.
 After connection, swing inputs and match snapshots travel over the peer data
 channel; the host owns ball physics, scoring, and phase changes.
