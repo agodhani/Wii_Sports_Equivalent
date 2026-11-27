@@ -72,9 +72,9 @@ for (const [label, slope, dir] of [['Topspin', 0.55, 1], ['Lob', 1.35, -1], ['Sl
     await page.click('#home-pointer');
     await expect(page.locator('#hint')).toContainText('lift steeply for lob');
 
-    const { flash, timing, contact } = await swingAtNextBall(page, null, dir, slope);
+    const { flash, visibleFlash, timing, contact } = await swingAtNextBall(page, null, dir, slope);
     expect(contact, `${label} did not connect: ${flash} ${JSON.stringify(timing)}`).toBe(true);
-    expect(flash, `${label} flick: ${JSON.stringify(timing)}`).toMatch(
+    expect(visibleFlash ?? '', `${label} never appeared: ${flash} ${JSON.stringify(timing)}`).toMatch(
       new RegExp(`^${label}! · (Perfect|Early|Late)!$`),
     );
   });

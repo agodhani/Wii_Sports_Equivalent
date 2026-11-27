@@ -96,8 +96,8 @@ export interface FlickTiming {
 /**
  * Wait for a fresh ball incoming to the player, then flick so the
  * pointer-swing detector fires ~at idealContactTime. Returns the flash text
- * shown once the contact resolves (null if the ball never came), whether the
- * racket connected, and the flick's measured timing for failure messages.
+ * at contact and when it was visibly announced, whether the racket connected,
+ * and the flick's measured timing for failure messages.
  *
  * The flick runs inside the page, positioned by the page's own clock and
  * dispatched to the game's real pointermove listener. Driving it with
@@ -110,7 +110,13 @@ export async function swingAtNextBall(
   prevIdeal: number | null = null,
   dir = 1,
   upwardSlope = 0,
-): Promise<{ flash: string | null; ideal: number | null; timing: FlickTiming | null; contact: boolean }> {
+): Promise<{
+  flash: string | null;
+  visibleFlash: string | null;
+  ideal: number | null;
+  timing: FlickTiming | null;
+  contact: boolean;
+}> {
   // A 0.36-viewport flick over 80 ms (~4.5 widths/s, well past the 1.2
   // trigger) starting 60 ms before ideal: the detector trips ~30 ms in, which
   // lands inside the ±50 ms Perfect band.
@@ -144,7 +150,17 @@ export async function swingAtNextBall(
         }
         await nextFrame();
       }
-      if (ideal === null) return { flash: null, ideal, timing: null, contact: false };
+      if (ideal === null) return { flash: null, visibleFlash: null, ideal, timing: null, contact: false };
+
+      const flashEl = document.querySelector('#flash');
+      const previousFlash = flashEl?.firstChild;
+      const readVisibleFlash = () => {
+        if (!flashEl || flashEl.firstChild === previousFlash) return null;
+        const style = getComputedStyle(flashEl);
+        return style.display !== 'none' && style.visibility === 'visible' && Number(style.opacity) > 0
+          ? flashEl.textContent
+          : null;
+      };
 
       const start = ideal - LEAD_S;
       while (nowS() < start - SPIN_S) await nextFrame();
@@ -173,15 +189,25 @@ export async function swingAtNextBall(
       };
       const contactDeadline = nowS() + 15;
       let s = read();
+      let visibleFlash = readVisibleFlash();
       while (s.idealContactTime === ideal && s.rally === rally && nowS() < contactDeadline) {
         await nextFrame();
         s = read();
+        visibleFlash ??= readVisibleFlash();
+      }
+      const flash = flashEl?.textContent ?? null;
+      const contact = s.rally > rally;
+      const flashDeadline = nowS() + 1;
+      while (contact && visibleFlash === null && nowS() < flashDeadline) {
+        await nextFrame();
+        visibleFlash = readVisibleFlash();
       }
       return {
-        flash: document.querySelector('#flash')?.textContent ?? null,
+        flash,
+        visibleFlash,
         ideal,
         timing,
-        contact: s.rally > rally,
+        contact,
       };
     },
     { prevIdeal, dir, upwardSlope },
