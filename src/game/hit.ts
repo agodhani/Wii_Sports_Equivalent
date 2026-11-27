@@ -26,7 +26,8 @@ export function resolveHit(swing: SwingEvent, incoming: IncomingBall): ShotComma
     case 'topspin':
       return { shotType, targetX, targetZ: -(5 + 4.5 * p), flightTime: 0.8 * flightTime };
     case 'lob':
-      return { shotType, targetX, targetZ: -(9.6 + 1.4 * p), flightTime: 2.0 - 0.25 * p };
+      // Land deep but short of the CPU's strike plane at z = -9.8.
+      return { shotType, targetX, targetZ: -(8.8 + 0.7 * p), flightTime: 2.0 - 0.25 * p };
     case 'slice':
       return { shotType, targetX, targetZ: -(7 + 3.5 * p), flightTime: flightTime + 0.08 };
     case 'flat':
