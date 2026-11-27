@@ -102,7 +102,9 @@ it('relays only current-round gameplay after negotiation and bounds size and rat
 
     send(host, data(0, 'stale round'));
     send(host, data(1, 'é'.repeat(2049)));
-    for (let i = 0; i <= 60; i++) send(host, data(1, String(i)));
+    const atLimit = 'é'.repeat(2048);
+    send(host, data(1, atLimit));
+    for (let i = 0; i < 60; i++) send(host, data(1, String(i)));
     const flushed = once(host, 'pong');
     host.ping();
     await flushed;
@@ -115,7 +117,7 @@ it('relays only current-round gameplay after negotiation and bounds size and rat
     send(host, data(1, 'refilled'));
     await marker;
     expect(guestMessages.filter((message) => 'data' in message)).toEqual([
-      ...Array.from({ length: 60 }, (_, i) => data(1, String(i))), data(1, 'refilled'),
+      data(1, atLimit), ...Array.from({ length: 59 }, (_, i) => data(1, String(i))), data(1, 'refilled'),
     ]);
     expect(otherMessages).not.toHaveBeenCalled();
 

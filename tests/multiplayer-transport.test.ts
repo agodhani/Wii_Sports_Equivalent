@@ -99,6 +99,17 @@ it.each(['timeout', 'ICE failure'])('coordinates relay after %s and resumes it o
   receive({ type: 'relay-data', round: 1, data: JSON.stringify(payload) });
   expect(message).toHaveBeenCalledWith(payload);
 
+  const atLimit = 'é'.repeat(2047);
+  transport.send(atLimit);
+  expect(socket!.send).toHaveBeenLastCalledWith(JSON.stringify({
+    type: 'relay-data', round: 1, data: JSON.stringify(atLimit),
+  }));
+  socket!.send.mockClear();
+  transport.send(atLimit + 'x');
+  expect(socket!.send).not.toHaveBeenCalled();
+  receive({ type: 'relay-data', round: 1, data: JSON.stringify(atLimit + 'x') });
+  expect(message).toHaveBeenCalledTimes(1);
+
   receive({ type: 'away' });
   expect(transport.path).toBeNull();
   expect(status).toHaveBeenLastCalledWith('lost');

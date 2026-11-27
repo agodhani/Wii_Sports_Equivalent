@@ -4,18 +4,25 @@ import { GL_ARGS, expect, openGame, state, test, type WtState } from './helpers'
 const viewport = { width: 800, height: 500 };
 test.use({ viewport });
 
-type OnlineState = WtState & { onlineStatus: string | null };
-const waitForLiveScore = (page: Page, score: { playerScore: number; cpuScore: number }) => page.waitForFunction(
-  ({ playerScore, cpuScore }) => {
+type OnlineState = WtState & { onlineStatus: string | null; onlinePath: string | null };
+const waitForLiveScore = (page: Page, score: { playerScore: number; cpuScore: number }, path: string) => page.waitForFunction(
+  ({ playerScore, cpuScore, path }) => {
     const s = (window as unknown as { __wt: { state(): OnlineState } }).__wt.state();
-    return s.onlineStatus === 'open' && (s.phase === 'serving' || s.phase === 'rally') &&
+    return s.onlineStatus === 'open' && s.onlinePath === path && (s.phase === 'serving' || s.phase === 'rally') &&
       s.playerScore === playerScore && s.cpuScore === cpuScore &&
       document.querySelector<HTMLElement>('#overlay')?.style.display === 'none';
   },
-  score,
+  { ...score, path },
 );
 
-test('a brief signaling drop preserves the score and the same match resumes', async ({ page: host }) => {
+async function reconnectPreservesScore(host: Page, path: 'direct' | 'relayed') {
+  if (path === 'relayed') {
+    await host.addInitScript(() => {
+      window.RTCPeerConnection = class extends RTCPeerConnection {
+        createOffer(): Promise<RTCSessionDescriptionInit> { return new Promise(() => {}); }
+      };
+    });
+  }
   await openGame(host);
   await host.locator('#home-multi').click();
   await expect(host.locator('#online-status')).toHaveText('Waiting for your opponent to join');
@@ -34,8 +41,8 @@ test('a brief signaling drop preserves the score and the same match resumes', as
     await guest.goto(invite);
     await guest.locator('#online-pointer').click();
     await Promise.all([
-      waitForLiveScore(host, { playerScore: 0, cpuScore: 1 }),
-      waitForLiveScore(guest, { playerScore: 1, cpuScore: 0 }),
+      waitForLiveScore(host, { playerScore: 0, cpuScore: 1 }, path),
+      waitForLiveScore(guest, { playerScore: 1, cpuScore: 0 }, path),
     ]);
 
     const reconnect = Promise.withResolvers<void>();
@@ -49,8 +56,8 @@ test('a brief signaling drop preserves the score and the same match resumes', as
     expect(await state(guest)).toMatchObject({ playerScore: cpuScore, cpuScore: playerScore });
 
     const resumed = Promise.all([
-      waitForLiveScore(host, { playerScore, cpuScore }),
-      waitForLiveScore(guest, { playerScore: cpuScore, cpuScore: playerScore }),
+      waitForLiveScore(host, { playerScore, cpuScore }, path),
+      waitForLiveScore(guest, { playerScore: cpuScore, cpuScore: playerScore }, path),
     ]);
     reconnect.resolve();
     await resumed;
@@ -66,4 +73,12 @@ test('a brief signaling drop preserves the score and the same match resumes', as
   } finally {
     await guestBrowser.close();
   }
+}
+
+test('a brief signaling drop preserves the score and the same match resumes', async ({ page }) => {
+  await reconnectPreservesScore(page, 'direct');
+});
+
+test('a brief signaling drop preserves the score and the relayed match resumes', async ({ page }) => {
+  await reconnectPreservesScore(page, 'relayed');
 });

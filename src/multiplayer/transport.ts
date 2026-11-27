@@ -11,6 +11,10 @@ export interface Transport {
 const DIRECT_TIMEOUT_MS = 5000;
 const GAME_MESSAGE_BYTES = 4096;
 const SEND_BUFFER_BYTES = 65_536;
+const encoder = new TextEncoder();
+
+const fitsGameMessage = (data: string) =>
+  data.length <= GAME_MESSAGE_BYTES && encoder.encode(data).byteLength <= GAME_MESSAGE_BYTES;
 
 interface TransportEvents {
   status(status: ConnectionStatus): void;
@@ -90,7 +94,7 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
     if (!closed) markOpen('relayed');
   };
   const receiveGame = (data: unknown) => {
-    if (typeof data !== 'string' || data.length > GAME_MESSAGE_BYTES) return;
+    if (typeof data !== 'string' || !fitsGameMessage(data)) return;
     let message: unknown;
     try { message = JSON.parse(data); } catch { return; }
     events.message(message);
@@ -202,7 +206,7 @@ export function openRoom(code: string, role: Role, events: TransportEvents): Tra
     send(message) {
       if (status !== 'open') return;
       const data = JSON.stringify(message);
-      if (data === undefined || data.length > GAME_MESSAGE_BYTES) return;
+      if (data === undefined || !fitsGameMessage(data)) return;
       if (path === 'direct' && channel?.readyState === 'open' && channel.bufferedAmount < SEND_BUFFER_BYTES) {
         channel.send(data);
       } else if (path === 'relayed' && socket.bufferedAmount < SEND_BUFFER_BYTES) {

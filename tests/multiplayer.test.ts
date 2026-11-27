@@ -67,6 +67,8 @@ describe('multiplayer singles', () => {
     { offset: 0, delay: 0.6, hit: true },
     { offset: 0.2, delay: 0.6, hit: false },
     { offset: 0, delay: 0.8, hit: false },
+    { offset: 0.05, delay: 0.799, hit: true },
+    { offset: 0.05, delay: 0.801, hit: false },
   ])('bounds guest delivery independently of contact accuracy ($offset, $delay)', ({ offset, delay, hit }) => {
     const host = new Singles(0, () => 0.75);
     host.setPaused(false, 0);
@@ -87,5 +89,28 @@ describe('multiplayer singles', () => {
       host.advance(guest.at + 1, hands);
       expect(host.snapshot(guest.at + 1)).toMatchObject({ phase: 'serving', scores: { host: 1, guest: 0 } });
     }
+  });
+
+  it('holds a missed guest shot through the latest valid input delivery, then awards a point', () => {
+    const host = new Singles(0, () => 0.75);
+    host.setPaused(false, 0);
+    host.advance(1, hands);
+    const first = host.snapshot(1).contact!;
+    host.submit('host', { ...swing, shot: first.id, side: first.side }, first.at);
+    host.advance(first.at + 0.02, hands);
+    const guest = host.snapshot(first.at + 0.02).contact!;
+    expect(guest.receiver).toBe('guest');
+
+    host.advance(guest.at + 0.401, hands);
+    const holding = host.snapshot(guest.at + 0.401);
+    expect(holding).toMatchObject({ phase: 'rally', scores: { host: 0, guest: 0 } });
+    host.advance(guest.at + 0.899, hands);
+    expect(host.snapshot(guest.at + 0.899)).toMatchObject({
+      phase: 'rally', scores: { host: 0, guest: 0 }, ball: holding.ball,
+    });
+    host.advance(guest.at + 0.901, hands);
+    expect(host.snapshot(guest.at + 0.901)).toMatchObject({
+      phase: 'serving', scores: { host: 1, guest: 0 }, ball: null,
+    });
   });
 });

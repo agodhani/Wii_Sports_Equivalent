@@ -80,7 +80,14 @@ test('a live direct match keeps its score and resumes on the relay if its data c
       { timeout: 20_000 },
     );
     await Promise.all([pathAndScore(host, 'direct', 0, 1), pathAndScore(guest, 'direct', 1, 0)]);
-    await host.evaluate(() => (window as unknown as { closeTennisChannel(): void }).closeTennisChannel());
+    await host.evaluate(async () => {
+      const w = window as unknown as {
+        __wt: { state(): { phase: string } };
+        closeTennisChannel(): void;
+      };
+      while (w.__wt.state().phase !== 'rally') await new Promise(requestAnimationFrame);
+      w.closeTennisChannel();
+    });
     await Promise.all([pathAndScore(host, 'relayed', 0, 1), pathAndScore(guest, 'relayed', 1, 0)]);
 
     expect((await swingAtNextBall(guest, null, -1, true)).timing).not.toBeNull();
