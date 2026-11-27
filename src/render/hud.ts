@@ -1,11 +1,13 @@
 import type { PoseFrame, CpuDifficulty } from '../types';
 import type { Challenge } from '../game/challenge';
+import type { Match } from '../game/match';
 import type { Records } from '../game/records';
 
 export interface MatchReport {
   won: boolean;
   player: number;
   cpu: number;
+  finishedOnDoubleFault: boolean;
   difficulty: CpuDifficulty;
   stats: {
     perfects: number;
@@ -38,9 +40,13 @@ export class Hud {
   constructor(private root: HTMLElement, private video: HTMLVideoElement) {
     root.innerHTML = `
       <div id="score" style="position:fixed;top:16px;left:50%;transform:translateX(-50%);
-        color:#fff;font-size:32px;font-weight:700;text-shadow:0 2px 6px #000;
-        display:none">0 — 0</div>
-      <div id="rally" style="position:fixed;top:58px;left:50%;transform:translateX(-50%);
+        color:#fff;font-size:32px;font-weight:700;text-shadow:0 2px 6px #000;text-align:center;
+        white-space:nowrap;display:none">
+        <div id="score-points">0 — 0</div>
+        <div id="score-games" style="font-size:16px"></div>
+        <div id="score-serve" style="font-size:14px"></div>
+      </div>
+      <div id="rally" style="position:fixed;top:98px;left:50%;transform:translateX(-50%);
         color:#fff;font-size:16px;opacity:.85;text-shadow:0 2px 6px #000;
         display:none"></div>
       <div id="flash" style="position:fixed;top:30%;left:50%;transform:translateX(-50%);
@@ -194,7 +200,7 @@ export class Hud {
       const line =
         challenge.you > challenge.them
           ? `A friend beat the ${cpuName} CPU ${challenge.you}–${challenge.them} (longest rally ${challenge.rally}). Can you top it?`
-          : `A friend took ${challenge.you} points off the ${cpuName} CPU. Can you do better?`;
+          : `A friend took ${challenge.you} ${challenge.format ?? 'points'} off the ${cpuName} CPU. Can you do better?`;
       banner.style.display = 'block';
       banner.innerHTML = `
         <div style="border:1px solid rgba(255,210,63,.7);border-radius:12px;padding:12px 14px;
@@ -286,6 +292,7 @@ export class Hud {
       <div style="font-size:32px;font-weight:800;color:${r.won ? '#ffd23f' : '#fff'}">
         ${r.won ? 'You win!' : 'CPU wins'}</div>
       <div style="font-size:42px;font-weight:800;margin-top:2px">${r.player} — ${r.cpu}</div>
+      ${r.finishedOnDoubleFault ? '<div>Double fault</div>' : ''}
       <div style="display:inline-block;margin-top:6px;padding:3px 12px;font-size:12px;
         border:1px solid rgba(255,255,255,.3);border-radius:999px;opacity:.85">vs ${cpuName} CPU</div>
       ${challengeLine}
@@ -361,8 +368,15 @@ export class Hud {
     (this.root.querySelector('#fps') as HTMLElement).textContent = `${Math.round(fps)} fps`;
   }
 
-  setScore(player: number, cpu: number): void {
-    this.score.textContent = `${player} — ${cpu}`;
+  setScore(match: Match): void {
+    const finished = match.phase === 'gameover';
+    const server = match.server === 'player' ? 'You serve' : 'CPU serves';
+    const court = match.serviceSide === 'deuce' ? 'Deuce court' : 'Ad court';
+    this.score.querySelector('#score-points')!.textContent = finished ? 'Set complete' : match.pointLabel;
+    this.score.querySelector('#score-games')!.textContent =
+      `You ${match.playerGames} — ${match.cpuGames} CPU · ${match.tiebreak ? 'Tiebreak' : 'Games'}`;
+    this.score.querySelector('#score-serve')!.textContent = finished ? '' :
+      `${server} · ${court} · ${match.serveAttempt === 1 ? 'First' : 'Second'} serve`;
   }
 
   flash(text: string, tone: 'great' | 'good' | 'bad' | 'info' = 'info'): void {

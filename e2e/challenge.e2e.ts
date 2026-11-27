@@ -6,6 +6,7 @@ const challengeUrl = (cpu: 'easy' | 'hard') =>
   `?challenge=1&cpu=${cpu}&you=7&them=3&rally=12`;
 
 test('challenge link shows banner, demotes camera, and reports the comparison', async ({ page }) => {
+  test.setTimeout(180_000);
   // home card fits the phone viewport even with the banner
   await openGame(page, challengeUrl('hard'));
   const homeBox = await page.locator('#home > div').boundingBox();

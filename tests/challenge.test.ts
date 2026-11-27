@@ -28,4 +28,19 @@ describe('challenge links', () => {
     expect(compareToChallenge({ you: 7, them: 3, rally: 12 }, c)).toBe('tied');
     expect(compareToChallenge({ you: 7, them: 3, rally: 5 }, c)).toBe('short');
   });
+
+  it('round-trips traditional final set results with a distinct version', () => {
+    const match = { ...c, format: 'games' as const, them: 6 };
+    expect(encodeChallenge(match)).toBe('challenge=2&cpu=hard&you=7&them=6&rally=12');
+    expect(parseChallenge(encodeChallenge(match))).toEqual(match);
+    expect(parseChallenge('?challenge=2&cpu=hard&you=4&them=6&rally=12')).toMatchObject({ format: 'games' });
+    expect(parseChallenge('?challenge=2&cpu=hard&you=7&them=4&rally=12')).toBeNull();
+    expect(parseChallenge('?challenge=2&cpu=hard&you=6&them=5&rally=12')).toBeNull();
+  });
+
+  it('compares result and rally, not unlike score margins, with a legacy challenge', () => {
+    const win = { ...c, format: 'games' as const, them: 6, rally: 13 };
+    expect(compareToChallenge(win, c)).toBe('beat');
+    expect(compareToChallenge({ ...win, you: 5, them: 7 }, c)).toBe('short');
+  });
 });

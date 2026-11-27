@@ -1,6 +1,7 @@
 import { test, expect, openGame, state, waitForPhase, loseMatch, isShown } from './helpers';
 
 test('change mode returns to the live attract home; clicks on the report do not restart', async ({ page }) => {
+  test.setTimeout(180_000);
   await openGame(page);
   await page.click('#home-pointer');
   await loseMatch(page);
@@ -30,5 +31,5 @@ test('change mode returns to the live attract home; clicks on the report do not 
     undefined,
     { timeout: 10_000, polling: 100 },
   );
-  await expect(page.locator('#score')).toHaveText('0 — 0');
+  await expect(page.locator('#score-points')).toHaveText('0 — 0');
 });

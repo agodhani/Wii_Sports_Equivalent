@@ -3,7 +3,8 @@ import { PoseTracker } from './tracking/pose';
 import { SwingDetector, TRIGGER_SCORE } from './swing/detector';
 import { PointerSwingDetector, POINTER_TRIGGER } from './input/pointer';
 import { Match, type Winner } from './game/match';
-import { stepBall, timeToReachZ, launchBall, predictAtZ, type BallState } from './game/ball';
+import { BALL_RADIUS, GRAVITY, RESTITUTION, stepBall, timeToReachZ, launchBall, predictAtZ, type BallState } from './game/ball';
+import { COURT_HALF_W, serveContact, serveFlight, servePosition, serveShot, serviceBoxX } from './game/serve';
 import { resolveHit, CONTACT_WINDOW_S, type IncomingBall } from './game/hit';
 import { timingCue } from './game/timing';
 import { newStats, summarize } from './game/stats';
@@ -29,7 +30,6 @@ import type {
 
 const PLAYER_Z = 11;
 const CPU_Z = -11;
-const COURT_HALF_W = 4.11;
 
 // Calibration: how vigorously the playing hand must wave to start the match.
 // Measured as average wrist speed in shoulder-widths/sec, so it is independent
@@ -61,7 +61,7 @@ async function main() {
   hud = new Hud(hudRoot, video);
   const match = new Match();
   const sfx = new Sfx();
-  const pointerDetector = new PointerSwingDetector();
+  let pointerDetector = new PointerSwingDetector();
 
   // ---- runtime state ----
   let inputMode: InputMode | null = null; // null until the player picks on the home screen
@@ -84,6 +84,8 @@ async function main() {
   let cpuX = 0; // CPU's actual standing position on court (updated only when CPU strikes)
   let playerX = 0;
   let serveAt = 0;
+  let delivery: (ReturnType<typeof serveFlight> & { startedAt: number }) | null = null;
+  let finishedOnDoubleFault = false;
   let paused = false;
   let pauseStart = 0;
   let lastNow: number | null = null;
@@ -207,7 +209,6 @@ async function main() {
     match.start();
     match.calibrated(); // pointer input needs no calibration
     beginServe(performance.now() / 1000);
-    hud.setHint('Swipe sideways across the screen as the ball reaches you');
   }
 
   window.addEventListener('pointermove', (e) => {
@@ -247,21 +248,41 @@ async function main() {
   /** Award a point and play the matching crowd reaction. */
   function awardPoint(w: Winner) {
     match.pointTo(w);
+    pointReaction(w);
+  }
+
+  function pointReaction(w: Winner) {
     sfx.point(w === 'player');
     scene.cheer(w === 'player' ? 1 : 0.35);
   }
 
   function beginServe(t: number) {
-    serveAt = t + 1.0;
+    serveAt = t + (match.serveAttempt === 2 ? 0.55 : match.server === 'cpu' ? 0.65 : 0);
+    delivery = null;
+    pendingPointerSwing = null;
+    pointerDetector = new PointerSwingDetector();
     ball = null;
     incoming = null;
     pendingShot = null;
-    cpuX = 0; // CPU resets to center to await the next serve
+    const from = serveContact(match.server, match.serviceSide);
+    const playerServing = match.server === 'player';
+    playerX = playerServing ? from.x : 0;
+    cpuX = playerServing ? 0 : from.x;
+    scene.setPlayerX(playerX);
+    scene.setCpuX(cpuX);
     incomingContact = null;
     rally = 0;
+    hud.setScore(match);
     hud.setRally(0);
     scene.setTimingCue(null);
-    scene.setBallVisible(false);
+    scene.setBall(from);
+    scene.setBallVisible(true);
+    const aim = serviceBoxX(match.server, match.serviceSide) > 0 ? 'right' : 'left';
+    hud.setHint(playerServing
+      ? `${inputMode === 'pointer' ? 'Swipe' : 'Swing'} ${aim} to serve`
+      : inputMode === 'pointer' && !hintCleared
+        ? 'Swipe sideways across the screen as the ball reaches you'
+        : null);
   }
 
   /** Restart the match after gameover without re-running calibration. */
@@ -269,7 +290,8 @@ async function main() {
     sfx.unlock();
     stats = newStats();
     match.reset();
-    hud.setScore(0, 0); // reset() zeroes the match but not the stale score text
+    hintCleared = false;
+    finishedOnDoubleFault = false;
     match.start();
     match.calibrated();
     beginServe(performance.now() / 1000);
@@ -297,7 +319,9 @@ async function main() {
     match.reset(); // → 'menu': the attract rally resumes on the next frame
     inputMode = null;
     pendingPointerSwing = null;
-    hud.setScore(0, 0);
+    hintCleared = false;
+    finishedOnDoubleFault = false;
+    hud.setScore(match);
     hud.setScoreVisible(false);
     hud.setRally(0);
     hud.hideOverlay();
@@ -310,14 +334,15 @@ async function main() {
     const won = match.winner === 'player';
     const cpuName = difficulty === 'easy' ? 'Easy' : 'Hard';
     const url = `${location.origin}${location.pathname}?${encodeChallenge({
+      format: 'games',
       cpu: difficulty,
-      you: match.playerScore,
-      them: match.cpuScore,
+      you: match.playerGames,
+      them: match.cpuGames,
       rally: stats.longestRally,
     })}`;
     const text = won
-      ? `I beat the ${cpuName} CPU ${match.playerScore}–${match.cpuScore} in Webcam Tennis (longest rally ${stats.longestRally}). Can you beat that?`
-      : `I took ${match.playerScore} points off the ${cpuName} CPU in Webcam Tennis (longest rally ${stats.longestRally}). Can you do better?`;
+      ? `I beat the ${cpuName} CPU ${match.playerGames}–${match.cpuGames} in Webcam Tennis (longest rally ${stats.longestRally}). Can you beat that?`
+      : `I took ${match.playerGames} games off the ${cpuName} CPU in Webcam Tennis (longest rally ${stats.longestRally}). Can you do better?`;
     if (navigator.share) {
       // No timeout: on phones the sheet legitimately stays open while the
       // player picks an app. Cancelling (AbortError) is a choice, not a
@@ -340,7 +365,7 @@ async function main() {
 
   /** First frame of gameover: freeze the mess, then bring up the report. */
   function endMatch() {
-    hud.setScore(match.playerScore, match.cpuScore);
+    hud.setScore(match);
     hud.clearFlash();
     hud.setHint(null);
     hud.hideSwingMeter();
@@ -369,8 +394,9 @@ async function main() {
     hud.showReport(
       {
         won,
-        player: match.playerScore,
-        cpu: match.cpuScore,
+        player: match.playerGames,
+        cpu: match.cpuGames,
+        finishedOnDoubleFault,
         difficulty,
         stats: {
           perfects: stats.perfects,
@@ -381,7 +407,7 @@ async function main() {
         records,
         challengeResult: challenge
           ? compareToChallenge(
-              { you: match.playerScore, them: match.cpuScore, rally: stats.longestRally },
+              { format: 'games', you: match.playerGames, them: match.cpuGames, rally: stats.longestRally },
               challenge,
             )
           : null,
@@ -395,18 +421,22 @@ async function main() {
 
   /** Launch the ball and, if it heads to the player, precompute the contact info. */
   function launch(from: { x: number; y: number; z: number }, shot: ShotCommand, now: number) {
-    ball = launchBall(from, shot);
+    trackFlight(launchBall(from, shot), now, shot.targetX);
+  }
+
+  function trackFlight(state: BallState, now: number, targetX?: number) {
+    ball = state;
     pendingShot = null;
     lastLaunchAt = now;
     bouncedSinceLaunch = false;
-    if (shot.targetZ > 0) {
+    if (state.vel.z > 0) {
       // toward player: ideal contact when ball reaches the player's strike plane
       const tHit = timeToReachZ(ball, PLAYER_Z - 1.2);
       incoming = tHit
         ? {
             idealContactTime: now + tHit,
             ballSide:
-              (shot.targetX >= playerX) === (handedness === 'right')
+              ((targetX ?? state.pos.x + state.vel.x * tHit) >= playerX) === (handedness === 'right')
                 ? 'forehand'
                 : 'backhand',
           }
@@ -420,6 +450,57 @@ async function main() {
       incoming = null;
       incomingContact = null;
     }
+  }
+
+  function stepServe(now: number, swing: SwingEvent | null) {
+    if (!delivery) {
+      if (now < serveAt || (match.server === 'player' && (!swing || swing.timestamp < serveAt))) return;
+      const playerServing = match.server === 'player';
+      const shot = serveShot(match.server, match.serviceSide, playerServing ? swing : null, Math.random() - 0.5);
+      delivery = { ...serveFlight(match.server, match.serviceSide, shot), startedAt: now };
+      if (!delivery.fault) {
+        trackFlight(delivery.ball, now, shot.targetX);
+        match.serveIn();
+      }
+      if (!playerServing) scene.cpuSwing();
+      else hud.setHint(null);
+      sfx.hit(0.5);
+      return;
+    }
+
+    const elapsed = now - delivery.startedAt;
+    const pos = servePosition(delivery.ball, Math.min(elapsed, delivery.duration));
+    scene.setBall(pos);
+    if (elapsed < delivery.duration) {
+      if (incoming && incomingContact) {
+        scene.setTimingCue({ pos: incomingContact, ...timingCue(now, incoming.idealContactTime) });
+      }
+      return;
+    }
+    if (delivery.fault) {
+      delivery = null;
+      const receiver = match.server === 'player' ? 'cpu' : 'player';
+      if (match.serveFault() === 'fault') {
+        hud.flash('Fault', 'bad');
+        beginServe(now);
+      } else {
+        hud.flash('Double fault', 'bad');
+        finishedOnDoubleFault = match.winner !== null;
+        pointReaction(receiver);
+      }
+      return;
+    }
+
+    const { duration, ball: initial } = delivery;
+    ball = {
+      pos: { ...pos, y: BALL_RADIUS },
+      vel: { ...initial.vel, y: -(initial.vel.y + GRAVITY * duration) * RESTITUTION },
+    };
+    lastLaunchAt = now;
+    bouncedSinceLaunch = true;
+    sfx.bounce();
+    scene.burst(pos, 0, 0xcfd8e3);
+    delivery = null;
   }
 
   function loop() {
@@ -547,6 +628,7 @@ async function main() {
         // duration so tracking loss never costs the player a point.
         const pausedFor = now - pauseStart;
         serveAt += pausedFor;
+        if (delivery) delivery.startedAt += pausedFor;
         if (incoming) incoming.idealContactTime += pausedFor;
       }
     }
@@ -554,7 +636,7 @@ async function main() {
     if (!paused) {
       // Feed the detector every frame of play, not just while a ball is incoming,
       // so the swing meter stays live and its history never goes stale between
-      // shots. The swing is acted on only in the rally block below. A pointer
+      // shots. A pointer
       // swing is consumed the frame after it was emitted and always cleared, so
       // a stale flick can never apply to a later ball.
       let swing: SwingEvent | null = null;
@@ -572,23 +654,19 @@ async function main() {
         swing = detector.update(frame);
       }
 
-      // ---- serving: CPU tosses the ball toward the player ----
-      if (match.phase === 'serving' && now >= serveAt) {
-        const shot: ShotCommand = {
-          targetX: -2 + 4 * Math.random(),
-          targetZ: 8.5,
-          flightTime: 1.5,
-        };
-        launch({ x: cpuX, y: 1.2, z: CPU_Z }, shot, now);
-        match.serveLaunched();
+      if (match.phase === 'serving') {
+        stepServe(now, swing);
+        swing = null;
+      } else if (delivery) {
+        stepServe(now, null);
       }
 
       // ---- rally ----
       // Hit-stop: freeze ball motion (and the avatar's run) briefly on player
       // contact so the hit lands with a beat. Real time still flows, so the
       // timing windows and effects don't shift.
-      const simDt = now < hitStopUntil ? 0 : dt;
-      if (match.phase === 'rally' && ball) {
+      const simDt = now < hitStopUntil || lastLaunchAt === now ? 0 : dt;
+      if (match.phase === 'rally' && ball && !delivery) {
         const preVelY = ball.vel.y;
         ball = stepBall(ball, simDt);
         if (preVelY < 0 && ball.vel.y > 0) {
@@ -758,7 +836,6 @@ async function main() {
 
       // ---- point / gameover transitions ----
       if (match.phase === 'point') {
-        hud.setScore(match.playerScore, match.cpuScore);
         match.nextPoint();
         beginServe(now);
       }
@@ -798,6 +875,12 @@ async function main() {
         difficulty,
         playerScore: match.playerScore,
         cpuScore: match.cpuScore,
+        playerGames: match.playerGames,
+        cpuGames: match.cpuGames,
+        server: match.server,
+        serveAttempt: match.serveAttempt,
+        serveReady: match.phase === 'serving' && match.server === 'player' &&
+          !delivery && !paused && performance.now() / 1000 >= serveAt,
         inputMode,
         rally,
         demoZ: demo?.pos.z ?? null,

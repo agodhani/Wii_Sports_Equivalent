@@ -2,7 +2,7 @@ import type { Vec3, ShotCommand } from '../types';
 
 export const BALL_RADIUS = 0.11;
 export const GRAVITY = -9.8;
-const RESTITUTION = 0.75;
+export const RESTITUTION = 0.75;
 
 export interface BallState { pos: Vec3; vel: Vec3 }
 

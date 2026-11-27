@@ -1,25 +1,25 @@
-import { WIN_SCORE } from './match';
 import type { CpuDifficulty } from '../types';
 
 /**
  * Challenge links: a finished match packed into URL params so a friend can
- * open the game, see what you did, and try to top it. Only scorelines a real
- * finished match can produce are accepted — exactly one side at WIN_SCORE.
+ * open the game, see what you did, and try to top it.
  */
 export interface Challenge {
   cpu: CpuDifficulty;
-  you: number; // challenger's points
-  them: number; // CPU's points
+  format?: 'games'; // absent for legacy first-to-seven point scores
+  you: number;
+  them: number;
   rally: number; // challenger's longest rally
 }
 
 export function encodeChallenge(c: Challenge): string {
-  return `challenge=1&cpu=${c.cpu}&you=${c.you}&them=${c.them}&rally=${c.rally}`;
+  return `challenge=${c.format === 'games' ? 2 : 1}&cpu=${c.cpu}&you=${c.you}&them=${c.them}&rally=${c.rally}`;
 }
 
 export function parseChallenge(search: string): Challenge | null {
   const p = new URLSearchParams(search);
-  if (p.get('challenge') !== '1') return null;
+  const version = p.get('challenge');
+  if (version !== '1' && version !== '2') return null;
   const cpu = p.get('cpu');
   if (cpu !== 'easy' && cpu !== 'hard') return null;
   const int = (k: string) => {
@@ -30,21 +30,28 @@ export function parseChallenge(search: string): Challenge | null {
   const them = int('them');
   const rally = int('rally');
   if (you === null || them === null || rally === null) return null;
-  if (you > WIN_SCORE || them > WIN_SCORE || rally > 999) return null;
-  if ((you === WIN_SCORE) === (them === WIN_SCORE)) return null; // must be finished
+  if (rally > 999) return null;
+  const winner = Math.max(you, them);
+  const loser = Math.min(you, them);
+  if (version === '2') {
+    if (!(winner === 6 && loser <= 4) && !(winner === 7 && (loser === 5 || loser === 6))) return null;
+    return { format: 'games', cpu, you, them, rally };
+  }
+  if (winner !== 7 || loser >= 7) return null;
   return { cpu, you, them, rally };
 }
 
 /**
- * How my match stacks up against the challenge. Margin of victory decides;
- * a tied margin is broken by longest rally.
+ * Compare margins when scoring formats match; otherwise compare win/loss.
+ * A tied result is broken by longest rally.
  */
 export function compareToChallenge(
-  mine: { you: number; them: number; rally: number },
+  mine: Pick<Challenge, 'format' | 'you' | 'them' | 'rally'>,
   c: Challenge,
 ): 'beat' | 'tied' | 'short' {
-  const myMargin = mine.you - mine.them;
-  const theirMargin = c.you - c.them;
+  const sameFormat = mine.format === c.format;
+  const myMargin = sameFormat ? mine.you - mine.them : Math.sign(mine.you - mine.them);
+  const theirMargin = sameFormat ? c.you - c.them : Math.sign(c.you - c.them);
   if (myMargin > theirMargin) return 'beat';
   if (myMargin === theirMargin) return mine.rally > c.rally ? 'beat' : mine.rally === c.rally ? 'tied' : 'short';
   return 'short';

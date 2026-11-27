@@ -1,4 +1,4 @@
-import { test, expect, openGame, state, waitForPhase, swingAtNextBall, isShown, hudFps } from './helpers';
+import { test, expect, openGame, state, waitForPhase, swingAtNextBall, swingServe, isShown, hudFps } from './helpers';
 
 const HIT_FLASHES = ['Perfect!', 'Early!', 'Late!'];
 
@@ -8,7 +8,7 @@ test('pointer mode: match starts, swings register, misses score for CPU', async 
 
   // score + hint visible immediately, serve becomes a live rally
   expect(await isShown(page, '#score')).toBe(true);
-  await expect(page.locator('#score')).toHaveText('0 — 0');
+  await expect(page.locator('#score-points')).toHaveText('0 — 0');
   expect(await isShown(page, '#hint')).toBe(true);
   await waitForPhase(page, 'rally');
   expect((await state(page)).inputMode).toBe('pointer');
@@ -64,4 +64,33 @@ test('idle ball flashes Miss! and scores for the CPU', async ({ page }) => {
   );
   await expect(page.locator('#flash')).toHaveText('Miss!');
   expect((await state(page)).cpuScore).toBe(cpuBefore + 1);
+});
+
+test('player swings to serve, gets two attempts, and changes court after a double fault', async ({ page }) => {
+  await openGame(page);
+  await page.click('#home-pointer');
+  const waitForServe = () => expect.poll(async () => (await state(page)).serveReady, { timeout: 20_000 }).toBe(true);
+  const points = page.locator('#score-points');
+  const serve = page.locator('#score-serve');
+  const flash = page.locator('#flash');
+  await expect(serve).toContainText('CPU serves');
+  await waitForServe();
+  await expect(page.locator('#score-games')).toContainText('You 0 — 1 CPU');
+  await expect(serve).toHaveText('You serve · Deuce court · First serve');
+  await expect(page.locator('#hint')).toHaveText('Swipe left to serve');
+
+  await swingServe(page, true);
+  await expect(flash).toHaveText('Fault');
+  await expect(points).toHaveText('0 — 0');
+  await expect(serve).toHaveText('You serve · Deuce court · Second serve');
+  await waitForServe();
+  await swingServe(page, true);
+  await expect(flash).toHaveText('Double fault');
+  await expect(points).toHaveText('0 — 15');
+  await expect(serve).toHaveText('You serve · Ad court · First serve');
+  await expect(page.locator('#hint')).toHaveText('Swipe right to serve');
+
+  await swingServe(page);
+  await waitForPhase(page, 'rally');
+  expect((await state(page)).idealContactTime).toBeNull(); // ball is heading to the CPU
 });
