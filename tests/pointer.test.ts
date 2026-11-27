@@ -80,6 +80,14 @@ describe('PointerSwingDetector', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('registers a short slice after an idle gap with no pointer samples', () => {
+    const d = new PointerSwingDetector();
+    const lob = feed(d, 0, 0.075, (p) => ({ x: 0.68 - 0.36 * p, y: 0.75 - 0.48 * p }));
+    expect(lob).toMatchObject([{ event: { shotType: 'lob' } }]);
+    const slice = feed(d, 3, 0.075, (p) => ({ x: 0.32 + 0.36 * p, y: 0.3 + 0.20 * p }));
+    expect(slice).toMatchObject([{ event: { shotType: 'slice' } }]);
+  });
+
   it('merges back-to-back flicks into one event, fires again after a hold', () => {
     const d = new PointerSwingDetector();
     expect(feed(d, 0, 0.1, horizontal(0.3, 0.6))).toHaveLength(1);

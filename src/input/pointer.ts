@@ -41,6 +41,12 @@ export class PointerSwingDetector {
   strength = 0;
 
   update(s: PointerSample): SwingEvent | null {
+    const previous = this.history[this.history.length - 1];
+    if (previous && s.t - previous.t > WINDOW_S) {
+      this.history = [];
+      this.strength = 0;
+      if (s.t - this.triggeredAt >= COOLDOWN_S) this.state = 'idle';
+    }
     this.history.push(s);
 
     // Keep exactly one sample at or before the window start, so the span always
