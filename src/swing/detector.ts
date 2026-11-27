@@ -32,7 +32,7 @@ interface Sample {
   forearmAngle: number;   // radians, elbow → wrist
   torsoAngle: number;     // radians, shoulder line
   shoulderMidX: number;
-  relativeWristY: number;
+  wristYFromShoulders: number;
 }
 
 /** Smallest signed difference between two angles, in [-π, π]. */
@@ -71,7 +71,7 @@ export class SwingDetector {
         f.rightShoulder.x - f.leftShoulder.x,
       ),
       shoulderMidX: (f.leftShoulder.x + f.rightShoulder.x) / 2,
-      relativeWristY: (wrist.y - (f.leftShoulder.y + f.rightShoulder.y) / 2) / f.shoulderWidth,
+      wristYFromShoulders: wrist.y - (f.leftShoulder.y + f.rightShoulder.y) / 2,
     });
 
     // Keep exactly one sample at or before the window start, so the span always
@@ -110,11 +110,15 @@ export class SwingDetector {
         this.handedness === 'right'
           ? onRight ? 'forehand' : 'backhand'
           : onRight ? 'backhand' : 'forehand';
+      const pathScale = Math.hypot(
+        f.rightShoulder.x - f.leftShoulder.x,
+        (f.rightShoulder.y - f.leftShoulder.y) / f.aspectRatio,
+      );
       return {
         side,
         shotType: classifyShot(
-          horizontal * span,
-          (oldest.relativeWristY - now.relativeWristY) / f.aspectRatio,
+          Math.abs(wrist.x - oldest.wrist.x) / pathScale,
+          (oldest.wristYFromShoulders - now.wristYFromShoulders) / f.aspectRatio / pathScale,
           MIN_RISE,
         ),
         speed: wristSpeed,
